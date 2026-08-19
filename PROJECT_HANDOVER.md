@@ -102,9 +102,16 @@ GPS recovery file is temporary and separate from PWA history.
 - Workflow: Java 17, Android SDK platform/build-tools 35, Gradle 8.9,
   `:app:assembleDebug`, artifact `shift-tracker-debug-apk`, retention 14 days,
   manual `workflow_dispatch` plus Android-file push triggers.
+- Cloud-build JVM target fix: `android-shell/app/build.gradle.kts` now sets
+  Android Java source/target compatibility to Java 17 and Kotlin's typed
+  `compilerOptions.jvmTarget` to `JvmTarget.JVM_17`, with a Kotlin JVM
+  toolchain of 17. This matches the existing Java 17 Actions environment and
+  fixes the `compileDebugJavaWithJavac` 1.8 versus `compileDebugKotlin` 17
+  incompatibility reported by the first cloud build.
 - No release signing, keystore, signing password, or secret is included.
-- Cloud build has **not** been proven from this recovery checkout because no
-  local APK was available and the GitHub Actions run still needs to be made.
+- The first cloud build reached Kotlin compilation but failed on the JVM target
+  mismatch above. The configuration fix is applied; the cloud build still
+  needs to be retried and a real Fold test remains outstanding.
 - No real Fold test has been completed.
 
 ## Build kit contents
