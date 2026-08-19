@@ -1,0 +1,65 @@
+# Shift Tracker Android shell — Stage 2
+
+This is deliberately a thin Android wrapper for the published Shift Tracker
+PWA. It does not contain a copy of the web UI and therefore ordinary web
+publishes continue to appear after **Refresh App** without rebuilding an APK.
+
+Current stage:
+
+- exact HTTPS origin lock: `dominos-shift-tracker.traynor1987.chatgpt.site`
+- external top-level links open outside the privileged WebView
+- no `addJavascriptInterface`; origin-restricted Web Message bridge only
+- bridge reports the independent shell version and brokers only named,
+  exact-origin delivery-location messages
+- foreground Android GPS runs only for an active Single/Double delivery;
+  the persistent low-priority notification is visible for that period
+- samples keep the provider timestamp, accuracy, speed and heading and are
+  held in an encrypted Keystore-backed recovery journal until the PWA's
+  canonical ingestion path acknowledges them
+- Delivered deliberately leaves the service running for the return journey;
+  Back at Store or Cancel stops it and removes the notification
+- browser `watchPosition` remains the fallback in normal PWA/browser mode and
+  is suppressed while the native bridge has an active/requested delivery
+- no camera, photo picker, arbitrary file bridge or existing PWA data migration
+
+The native shell is still a thin remote WebView. Web publishes remain
+independent: after publishing the hosted PWA, use **Refresh App** in the
+installed shell; an APK rebuild is not required for ordinary web changes.
+
+## Cloud debug APK builds
+
+The repository contains `.github/workflows/android-debug-apk.yml`. It builds
+only when Android-shell files change or when you manually choose **Run
+workflow** in GitHub Actions. The workflow installs Java 17, Android SDK 35
+and Gradle 8.9 on a GitHub-hosted runner, then uploads the automatically
+debug-signed `app-debug.apk` as a short-lived Actions artifact.
+
+This is deliberately a debug build only. There are no release-signing keys,
+keystores or signing secrets in this project. Do not use the debug APK for
+Play Store distribution.
+
+### Phone-only setup
+
+The APK build does not need the full PWA source. A GitHub repository only needs
+the `android-shell/` directory and `.github/workflows/android-debug-apk.yml`.
+The easiest phone workflow is:
+
+1. Create a private GitHub repository from the GitHub mobile app or website.
+2. Download the Android-shell build kit from this Work conversation and extract
+   it on the phone. It contains the two paths above.
+3. From a phone terminal such as Termux, initialise the extracted folder, add
+   the new GitHub repository as `origin`, commit it and push the `main` branch.
+   GitHub will ask for your username and a fine-grained token with repository
+   Contents write access; create that token in GitHub's browser settings and
+   do not put it in the source or workflow.
+4. Open the repository's **Actions** tab, choose **Android debug APK**, press
+   **Run workflow**, and select `main` if GitHub has not already started the
+   build from the push.
+5. Open the completed run, scroll to **Artifacts**, download the
+   `shift-tracker-debug-apk` ZIP, extract it and install `app-debug.apk` on the
+   Android device. Android may require allowing installs from the browser or
+   file manager used for the download.
+
+Normal hosted-PWA changes still use ChatGPT Work → Publish → Refresh App. A
+new APK is needed only when this native shell, its permissions or its Android
+dependencies change.
