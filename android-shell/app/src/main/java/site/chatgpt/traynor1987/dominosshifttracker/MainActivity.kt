@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private var pendingStartDeliveryId: String? = null
     private var backgroundSettingsRequested = false
+    private var pendingBackgroundPermissionRequest = false
+    private var pendingBackgroundDeliveryId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -220,26 +222,59 @@ class MainActivity : ComponentActivity() {
             return
         }
         val deliveryId = DeliveryLocationService.activeDeliveryId()
-        val message = "To enable ${backgroundPermissionLabel()}, open App permissions → Location. This is optional capability; GPS still runs only during an active delivery."
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+ intentionally does not show an Allow all the time
-            // option in the runtime dialog. The user must choose it in the
-            // app's Location permission settings page.
-            backgroundSettingsRequested = true
-            sendNativeState("background_permission_required", deliveryId, message)
-            runCatching {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-            }.onFailure {
-                backgroundSettingsRequested = false
-                sendNativeState("service_not_started", deliveryId, "Android could not open the app Location permission settings")
-            }
-        } else {
-            // Android 10 can show the separate background permission dialog,
-            // but only after foreground location has already been granted.
-            sendNativeState("background_permission_required", deliveryId, message)
+        if (!hasPreciseLocationPermission()) {
+            // Background permission is never requested in the same call as
+            // foreground location. Complete the foreground stage first, then
+            // continue this request from its callback.
+            pendingBackgroundPermissionRequest = true
+            pendingBackgroundDeliveryId = deliveryId
+            sendNativeState("permission_required", deliveryId, "Grant Precise foreground location first; Android requires a separate background-location stage")
+            requestPermissions(requiredRuntimePermissions().toTypedArray(), LOCATION_PERMISSION_REQUEST)
+            return
+        }
+        requestBackgroundPermissionStage(deliveryId)
+    }
+
+    private fun requestBackgroundPermissionStage(deliveryId: String?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasBackgroundLocationPermission()) {
+            sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is already available")
+            sendShellReady()
+            return
+        }
+        // This is deliberately a second request after precise foreground
+        // permission. Android 11+ does not put Allow all the time in the
+        // runtime dialog; its callback is followed by the App Info screen.
+        sendNativeState(
+            "background_permission_required",
+            deliveryId,
+            "Precise foreground location is granted. Android will now guide you to App info → Permissions → Location → ${backgroundPermissionLabel()}. Tracking remains limited to an active delivery.",
+        )
+        runCatching {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), BACKGROUND_LOCATION_PERMISSION_REQUEST)
+        }.onFailure {
+            openBackgroundPermissionSettings(deliveryId)
+        }
+    }
+
+    private fun openBackgroundPermissionSettings(deliveryId: String?) {
+        if (hasBackgroundLocationPermission()) {
+            sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled")
+            sendShellReady()
+            return
+        }
+        backgroundSettingsRequested = true
+        sendNativeState(
+            "background_settings_opened",
+            deliveryId,
+            "Android requires this second stage in App info. Open Permissions → Location and choose ${backgroundPermissionLabel()}; return to Shift Tracker when finished.",
+        )
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        }.onFailure {
+            backgroundSettingsRequested = false
+            sendNativeState("background_permission_required", deliveryId, "Android could not open Shift Tracker App info; open App info → Permissions → Location manually")
         }
     }
 
@@ -272,16 +307,18 @@ class MainActivity : ComponentActivity() {
         if (serviceCode != "STOPPED" && serviceCode != "SERVICE_NOT_STARTED") return serviceCode
         if (!hasPreciseLocationPermission() || !hasNotificationPermission()) return "PERMISSION_MISSING"
         if (!isLocationProviderEnabled()) return "LOCATION_PROVIDER_DISABLED"
-        return "SERVICE_NOT_STARTED"
+        return if (hasBackgroundLocationPermission()) "BACKGROUND_PERMISSION_GRANTED" else "FOREGROUND_PERMISSION_GRANTED"
     }
 
     private fun diagnosticForStatus(status: String): String = when (status) {
         "permission_required" -> "PERMISSION_MISSING"
+        "foreground_permission_granted" -> "FOREGROUND_PERMISSION_GRANTED"
         "location_provider_disabled" -> "LOCATION_PROVIDER_DISABLED"
         "waiting_for_fix", "active" -> "WAITING_FOR_FIX"
         "sample_received" -> "SAMPLE_RECEIVED"
         "service_started" -> "SERVICE_ACTIVE"
-        "stopped", "background_permission_granted" -> "STOPPED"
+        "background_permission_granted" -> "BACKGROUND_PERMISSION_GRANTED"
+        "stopped" -> "STOPPED"
         "background_permission_required", "background_settings_opened" -> "BACKGROUND_PERMISSION_MISSING"
         else -> "SERVICE_NOT_STARTED"
     }
@@ -291,21 +328,47 @@ class MainActivity : ComponentActivity() {
         if (!hasPreciseLocationPermission()) {
             pendingStartDeliveryId = null
             sendNativeState("permission_required", deliveryId, "Precise location is required for native delivery GPS")
-        } else if (!hasNotificationPermission()) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
-            sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification")
-        } else startNativeLocationService(deliveryId)
+        } else {
+            sendNativeState("foreground_permission_granted", deliveryId, "Precise foreground location granted; continuing the active-delivery startup")
+            if (!hasNotificationPermission()) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+                sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification")
+            } else startNativeLocationService(deliveryId)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
-            LOCATION_PERMISSION_REQUEST, NOTIFICATION_PERMISSION_REQUEST -> continuePendingNativeStart()
+            LOCATION_PERMISSION_REQUEST -> {
+                if (pendingBackgroundPermissionRequest) {
+                    pendingBackgroundPermissionRequest = false
+                    val deliveryId = pendingBackgroundDeliveryId
+                    pendingBackgroundDeliveryId = null
+                    if (hasPreciseLocationPermission()) {
+                        sendNativeState("foreground_permission_granted", deliveryId, "Precise foreground location granted; requesting background location separately")
+                        requestBackgroundPermissionStage(deliveryId)
+                    } else {
+                        sendNativeState("permission_required", deliveryId, "Precise foreground location is still required before background location can be requested")
+                    }
+                } else continuePendingNativeStart()
+            }
+            NOTIFICATION_PERMISSION_REQUEST -> {
+                if (hasNotificationPermission()) continuePendingNativeStart()
+                else {
+                    val deliveryId = pendingStartDeliveryId
+                    pendingStartDeliveryId = null
+                    sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification, then start the delivery again")
+                }
+            }
             BACKGROUND_LOCATION_PERMISSION_REQUEST -> {
                 val deliveryId = DeliveryLocationService.activeDeliveryId()
                 if (hasBackgroundLocationPermission()) sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled")
-                else sendNativeState("background_permission_required", deliveryId, "Background location remains off; enable ${backgroundPermissionLabel()} from App permissions → Location if required")
-                sendShellReady()
+                else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) openBackgroundPermissionSettings(deliveryId)
+                else {
+                    sendNativeState("background_permission_required", deliveryId, "Background location remains off; enable ${backgroundPermissionLabel()} from App permissions → Location if required")
+                    sendShellReady()
+                }
             }
         }
     }

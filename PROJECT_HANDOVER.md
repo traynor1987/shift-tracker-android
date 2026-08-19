@@ -7,12 +7,12 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version in current source:** **2.1.1** (`lib/nativeBridge.ts` and the
+- **Web version in current source:** **2.1.2** (`lib/nativeBridge.ts` and the
   About panel). The older lowercase `project_handover.md` records Build 215;
-  a literal Build 217 marker was not found in the current source, so 2.1.1 is
+  a literal Build 217 marker was not found in the current source, so 2.1.2 is
   the version to trust for this checkout.
-- **Android shell version:** **2.1.1** (`android-shell/app/build.gradle.kts`),
-  versionCode 2, bridge version 1. The bridge version stays compatible so
+- **Android shell version:** **2.1.2** (`android-shell/app/build.gradle.kts`),
+  versionCode 3, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
@@ -48,7 +48,7 @@ new APK. Stage 3 camera work has not started.
 - Cleartext, file access, and content access are disabled.
 - Web and shell versions are reported independently.
 
-### Stage 2 — startup diagnostics patched, real-device first sample still pending
+### Stage 2 — startup diagnostics and staged permissions patched, real-device first sample still pending
 
 - `SINGLE`/`DOUBLE` starts the native foreground location service.
 - `DELIVERED` leaves native tracking active for the return journey.
@@ -71,17 +71,31 @@ new APK. Stage 3 camera work has not started.
   foreground/background permission, notification permission, provider, service,
   and last-sample diagnostics without exposing coordinates in the diagnostic
   payload.
-- Foreground location and notification permission requests are staged. The
-  manifest also declares `ACCESS_BACKGROUND_LOCATION`; Android 10 requests it
-  only after foreground permission, while Android 11+ opens the app Location
-  settings so the user can choose the localized “Allow all the time” option.
-  This is capability only: the service remains delivery-session-scoped.
+- Foreground precise location is requested first while the Activity is visible;
+  notification permission is requested separately before the foreground
+  service starts. The manifest also declares `ACCESS_BACKGROUND_LOCATION`.
+  When the user chooses the optional all-time capability, Android requests
+  background permission in a separate second stage. On Android 11+ the runtime
+  dialog cannot grant “Allow all the time”, so the shell then opens Shift
+  Tracker App info and reports the return result to the PWA; the user chooses
+  the localized background option under Permissions → Location. This is
+  capability only: the service remains delivery-session-scoped.
+- Native diagnostics now distinguish `FOREGROUND_PERMISSION_GRANTED`,
+  `BACKGROUND_PERMISSION_MISSING`, `BACKGROUND_PERMISSION_GRANTED`,
+  `SERVICE_ACTIVE`, `WAITING_FOR_FIX`, and `SAMPLE_RECEIVED`, with separate
+  foreground/background, notification, provider, service, and last-sample
+  fields. When the secure native bridge is available, the PWA claims native GPS
+  ownership before starting a delivery and does not show the browser GPS
+  permission prompt; normal browser/PWA mode keeps its existing prompt and
+  `watchPosition` fallback.
 
 Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
-Fold. The public hosted PWA now loads in that installed shell. The Fold test
-then showed no first native GPS point, so the focused startup fix in this
-handover is not yet real-device-proven; the next debug APK must be installed
-before repeating the test.
+Fold. The public hosted PWA now loads in that installed shell. The first Fold
+test of APK 2.1.1 reached the native diagnostics but remained at the foreground
+permission state, and Android Location settings did not yet expose “Allow all
+the time”. This 2.1.2 patch adds the missing separate background request and
+settings return path. A first native GPS sample is still not real-device-proven;
+the next debug APK must be installed before repeating the test.
 
 ## GPS and recovery storage
 
@@ -96,8 +110,10 @@ one-by-one after PWA acknowledgement.
 The manifest declares fine/coarse location, `ACCESS_BACKGROUND_LOCATION`,
 foreground service, `FOREGROUND_SERVICE_LOCATION`, notifications, and Internet.
 Foreground precise location is requested first, notification permission is
-requested separately, and background location is requested only afterward (or
-handled in Android's app Location settings on Android 11+). HTTPS is required;
+requested separately, and background location is requested only afterward. On
+Android 11+ the separate background request is followed by the app's App Info
+→ Permissions → Location screen because the runtime dialog cannot grant the
+all-time option. HTTPS is required;
 cleartext traffic is disabled; the bridge is limited to the exact trusted
 origin and named message types.
 
@@ -140,7 +156,8 @@ GPS recovery file is temporary and separate from PWA history.
 - The current public-Site Fold test has passed the hosted-PWA loading step but
   has not yet received the first native sample. Background/screen-lock GPS,
   notification persistence, recovery delivery, and duplicate-sample behavior
-  remain unverified until the patched APK is installed and tested.
+  remain unverified until the 2.1.2 permission-flow patch is installed and
+  tested.
 - Local `npm test` remains **84 passed, 0 failed**. `npm run lint` completes with
   the repository's existing warnings and no errors. The checkout has no Gradle
   wrapper or local `gradle` executable, so `:app:assembleDebug` must be verified
@@ -165,7 +182,7 @@ data.
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check web version 2.1.1 and Android shell 2.1.1 in About.
+2. Check web version 2.1.2 and Android shell 2.1.2 in About.
 3. Start a test Single delivery and confirm the foreground notification.
 4. Read the diagnostic line: bridge, foreground precision, background setting,
    FGS state, and provider state are shown without coordinates.
