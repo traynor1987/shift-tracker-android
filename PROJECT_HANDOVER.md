@@ -7,12 +7,13 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version in current source:** **2.1.0** (`lib/nativeBridge.ts` and the
+- **Web version in current source:** **2.1.1** (`lib/nativeBridge.ts` and the
   About panel). The older lowercase `project_handover.md` records Build 215;
-  a literal Build 217 marker was not found in the current source, so 2.1.0 is
+  a literal Build 217 marker was not found in the current source, so 2.1.1 is
   the version to trust for this checkout.
-- **Android shell version:** **2.1.0** (`android-shell/app/build.gradle.kts`),
-  versionCode 1, bridge version 1.
+- **Android shell version:** **2.1.1** (`android-shell/app/build.gradle.kts`),
+  versionCode 2, bridge version 1. The bridge version stays compatible so
+  ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
 
@@ -47,11 +48,12 @@ new APK. Stage 3 camera work has not started.
 - Cleartext, file access, and content access are disabled.
 - Web and shell versions are reported independently.
 
-### Stage 2 — source/test complete, device unverified
+### Stage 2 — startup diagnostics patched, real-device first sample still pending
 
 - `SINGLE`/`DOUBLE` starts the native foreground location service.
 - `DELIVERED` leaves native tracking active for the return journey.
-- `BACK AT STORE` and `CANCEL` stop the service and remove its notification.
+- `BACK AT STORE`, `CANCEL`, and clock-out finalisation stop the service and
+  remove its notification.
 - Location continues through WebView backgrounding and screen-lock lifecycle
   events in the service design (`START_STICKY` and foreground location service).
 - The notification is low priority and exists only while tracking is active.
@@ -63,9 +65,23 @@ new APK. Stage 3 camera work has not started.
   ordinary PWA mode keeps the existing `watchPosition` fallback.
 - Samples are acknowledged by the PWA after ingestion; the native journal is
   temporary recovery storage, not a competing permanent history database.
+- The PWA-to-shell listener is registered before the hello response can arrive.
+  The shell now reports `SERVICE_NOT_STARTED`, `PERMISSION_MISSING`,
+  `LOCATION_PROVIDER_DISABLED`, `WAITING_FOR_FIX`, and `SAMPLE_RECEIVED`, plus
+  foreground/background permission, notification permission, provider, service,
+  and last-sample diagnostics without exposing coordinates in the diagnostic
+  payload.
+- Foreground location and notification permission requests are staged. The
+  manifest also declares `ACCESS_BACKGROUND_LOCATION`; Android 10 requests it
+  only after foreground permission, while Android 11+ opens the app Location
+  settings so the user can choose the localized “Allow all the time” option.
+  This is capability only: the service remains delivery-session-scoped.
 
-This is not real-device proof. The Fold/screen-lock, OEM battery, route,
-duplicate-sample, and end-to-end analytics tests still need to happen.
+Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
+Fold. The public hosted PWA now loads in that installed shell. The Fold test
+then showed no first native GPS point, so the focused startup fix in this
+handover is not yet real-device-proven; the next debug APK must be installed
+before repeating the test.
 
 ## GPS and recovery storage
 
@@ -77,12 +93,13 @@ one-by-one after PWA acknowledgement.
 
 ## Permissions and security
 
-The manifest declares fine/coarse location, foreground service,
-`FOREGROUND_SERVICE_LOCATION`, notifications, and Internet. It does **not**
-declare `ACCESS_BACKGROUND_LOCATION`. Runtime permission requests are made when
-native delivery tracking starts. HTTPS is required; cleartext traffic is
-disabled; the bridge is limited to the exact trusted origin and named message
-types.
+The manifest declares fine/coarse location, `ACCESS_BACKGROUND_LOCATION`,
+foreground service, `FOREGROUND_SERVICE_LOCATION`, notifications, and Internet.
+Foreground precise location is requested first, notification permission is
+requested separately, and background location is requested only afterward (or
+handled in Android's app Location settings on Android 11+). HTTPS is required;
+cleartext traffic is disabled; the bridge is limited to the exact trusted
+origin and named message types.
 
 ## Data and migration
 
@@ -118,9 +135,16 @@ GPS recovery file is temporary and separate from PWA history.
 - No release signing, keystore, signing password, or secret is included.
 - The first cloud build failed on the JVM target mismatch above, and Cloud
   Build #2 failed on the `MainActivity.kt` issues above. The fixes are applied;
-  the cloud build still needs to be retried and a real Fold test remains
-  outstanding.
-- No real Fold test has been completed.
+  Cloud Build #3 subsequently succeeded and its debug APK was installed on a
+  real Samsung Fold.
+- The current public-Site Fold test has passed the hosted-PWA loading step but
+  has not yet received the first native sample. Background/screen-lock GPS,
+  notification persistence, recovery delivery, and duplicate-sample behavior
+  remain unverified until the patched APK is installed and tested.
+- Local `npm test` remains **84 passed, 0 failed**. `npm run lint` completes with
+  the repository's existing warnings and no errors. The checkout has no Gradle
+  wrapper or local `gradle` executable, so `:app:assembleDebug` must be verified
+  by the existing Java 17 GitHub Actions workflow.
 
 ## Build kit contents
 
@@ -131,17 +155,25 @@ data, GPS history, or build outputs.
 
 ## Exact next step
 
-Build the Stage 2 debug APK in GitHub Actions, download and install it on the
-Fold, then run the background/screen-lock GPS test. Do not start Stage 3 and do
-not migrate data until that real-device validation is complete.
+Run the Android debug workflow for this patch, install the new APK on the Fold,
+start Single/Double, and read the in-app native diagnostic line. It should
+progress from `SERVICE_NOT_STARTED` to `WAITING_FOR_FIX` to `SAMPLE_RECEIVED`.
+Then test Home/app switch/screen lock, Delivered, Back at Store, Cancel, and
+the optional `Allow all the time` settings flow. Do not start Stage 3 or migrate
+data.
 
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check web version 2.1.0 and Android shell 2.1.0 in About.
+2. Check web version 2.1.1 and Android shell 2.1.1 in About.
 3. Start a test Single delivery and confirm the foreground notification.
-4. Move safely, lock the screen, keep moving, unlock, and press Delivered.
-5. Confirm tracking continues through the return journey.
-6. Press Back at Store or cancel; confirm the notification disappears.
-7. Inspect route evidence, timestamps, accuracy, geofence, mileage, traffic,
+4. Read the diagnostic line: bridge, foreground precision, background setting,
+   FGS state, and provider state are shown without coordinates.
+5. Move safely, lock the screen, keep moving, unlock, and press Delivered.
+6. Confirm tracking continues through the return journey.
+7. If desired, choose `Allow all the time` from the in-app Location settings
+   guidance; verify this does not start tracking outside a delivery.
+8. Press Back at Store or cancel; confirm the notification disappears and the
+   diagnostic returns to stopped.
+9. Inspect route evidence, timestamps, accuracy, geofence, mileage, traffic,
    OSM, customer detection, and duplicate-sample behaviour.

@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
@@ -41,9 +42,21 @@ class DeliveryLocationService : Service() {
         private var running = false
 
         @Volatile
+        private var diagnostic = "SERVICE_NOT_STARTED"
+
+        @Volatile
+        private var lastSampleReceivedAt: Long? = null
+
+        @Volatile
         private var instance: DeliveryLocationService? = null
 
         fun isRunning() = running
+
+        fun diagnosticCode() = diagnostic
+
+        fun lastSampleReceivedAt() = lastSampleReceivedAt
+
+        fun activeDeliveryId(): String? = instance?.deliveryId
 
         fun flushPendingSamples(context: android.content.Context) {
             instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
@@ -61,6 +74,7 @@ class DeliveryLocationService : Service() {
     private lateinit var preferences: SharedPreferences
     private var deliveryId: String? = null
     private var requestGeneration = 0L
+    private var sampleReceivedForSession = false
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -83,7 +97,7 @@ class DeliveryLocationService : Service() {
             ACTION_START -> {
                 val requestedDeliveryId = intent.getStringExtra(EXTRA_DELIVERY_ID)?.trim()
                 if (requestedDeliveryId.isNullOrEmpty() || requestedDeliveryId.length > 128) {
-                    MainActivity.sendNativeMessage(stateMessage("error", null, "A valid delivery session was not supplied"))
+                    emitState("service_not_started", null, "A valid delivery session was not supplied")
                     stopSelf()
                 } else startTracking(requestedDeliveryId)
             }
@@ -97,7 +111,7 @@ class DeliveryLocationService : Service() {
     private fun startTracking(requestedDeliveryId: String) {
         if (running && deliveryId == requestedDeliveryId) {
             flushPendingSamples()
-            MainActivity.sendNativeMessage(stateMessage("active", requestedDeliveryId, null))
+            emitState(if (sampleReceivedForSession) "sample_received" else "waiting_for_fix", requestedDeliveryId, null)
             return
         }
         if (deliveryId != null && deliveryId != requestedDeliveryId) {
@@ -106,14 +120,29 @@ class DeliveryLocationService : Service() {
             running = false
             deliveryId = null
         }
-        if (!hasFineLocationPermission()) {
-            MainActivity.sendNativeMessage(stateMessage("permission_required", requestedDeliveryId, "Precise location permission is required for native delivery GPS"))
+        if (!hasPreciseLocationPermission() || !hasNotificationPermission()) {
+            emitState("permission_required", requestedDeliveryId, "Precise location and the persistent tracking notification permission are required")
+            failTracking()
+            return
+        }
+        if (!isLocationProviderEnabled()) {
+            emitState("location_provider_disabled", requestedDeliveryId, "Android Location services are disabled; turn on Location and retry the delivery")
             failTracking()
             return
         }
         deliveryId = requestedDeliveryId
+        sampleReceivedForSession = false
+        lastSampleReceivedAt = null
+        diagnostic = "SERVICE_NOT_STARTED"
         preferences.edit().putString(PREF_DELIVERY_ID, requestedDeliveryId).apply()
-        startForegroundCompat()
+        val foregroundStarted = runCatching { startForegroundCompat() }.isSuccess
+        if (!foregroundStarted) {
+            emitState("service_not_started", requestedDeliveryId, "Android could not start the location foreground service; check location and notification permissions")
+            failTracking()
+            return
+        }
+        running = true
+        emitState("service_started", requestedDeliveryId, "Persistent delivery GPS notification posted; requesting precise location")
         val generation = ++requestGeneration
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
             .setMinUpdateIntervalMillis(2_000L)
@@ -124,20 +153,18 @@ class DeliveryLocationService : Service() {
             fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnSuccessListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnSuccessListener
-                    running = true
-                    MainActivity.sendNativeMessage(stateMessage("active", deliveryId, null))
+                    diagnostic = "WAITING_FOR_FIX"
+                    emitState("waiting_for_fix", deliveryId, "Foreground service is running; waiting for the first precise location fix")
                     flushPendingSamples()
                 }
                 .addOnFailureListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnFailureListener
-                    running = false
-                    MainActivity.sendNativeMessage(stateMessage("error", deliveryId, "Android location provider could not start"))
+                    emitState("service_not_started", deliveryId, "Android location provider could not start")
                     failTracking()
                 }
         }.onFailure {
             if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@onFailure
-            running = false
-            MainActivity.sendNativeMessage(stateMessage("error", deliveryId, "Android location provider could not start"))
+            emitState("service_not_started", deliveryId, "Android location provider could not start")
             failTracking()
         }
     }
@@ -158,6 +185,12 @@ class DeliveryLocationService : Service() {
             heading = if (location.hasBearing() && location.bearing.isFinite()) location.bearing else null,
         )
         sampleStore.append(sample)
+        if (!sampleReceivedForSession) {
+            sampleReceivedForSession = true
+            lastSampleReceivedAt = location.time
+            diagnostic = "SAMPLE_RECEIVED"
+            emitState("sample_received", id, "Native GPS sample received and sent to the hosted PWA")
+        }
         MainActivity.sendNativeMessage(sampleMessage(sample))
     }
 
@@ -171,8 +204,11 @@ class DeliveryLocationService : Service() {
         requestGeneration += 1
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
-        MainActivity.sendNativeMessage(stateMessage("stopped", deliveryId, null))
+        diagnostic = "STOPPED"
+        emitState("stopped", deliveryId, null)
         deliveryId = null
+        sampleReceivedForSession = false
+        lastSampleReceivedAt = null
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
         stopForegroundCompat()
         stopSelf()
@@ -197,7 +233,17 @@ class DeliveryLocationService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun hasFineLocationPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun hasPreciseLocationPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasNotificationPermission() = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasBackgroundLocationPermission() = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun isLocationProviderEnabled(): Boolean = runCatching {
+        val manager = getSystemService(LocationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) manager.isLocationEnabled
+        else manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    }.getOrDefault(false)
 
     private fun startForegroundCompat() {
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
@@ -229,9 +275,41 @@ class DeliveryLocationService : Service() {
         }
     }
 
+    private fun emitState(status: String, id: String?, message: String?) {
+        diagnostic = diagnosticForStatus(status)
+        MainActivity.sendNativeMessage(stateMessage(status, id, message))
+    }
+
+    private fun diagnosticForStatus(status: String): String = when (status) {
+        "permission_required" -> "PERMISSION_MISSING"
+        "location_provider_disabled" -> "LOCATION_PROVIDER_DISABLED"
+        "waiting_for_fix", "active" -> "WAITING_FOR_FIX"
+        "sample_received" -> "SAMPLE_RECEIVED"
+        "service_started" -> "SERVICE_ACTIVE"
+        "stopped", "background_permission_granted" -> "STOPPED"
+        "background_permission_required", "background_settings_opened" -> "BACKGROUND_PERMISSION_MISSING"
+        else -> "SERVICE_NOT_STARTED"
+    }
+
+    private fun diagnosticsJson(): JSONObject = JSONObject()
+        .put("diagnostic", diagnostic)
+        .put("foregroundLocation", when {
+            hasPreciseLocationPermission() -> "precise"
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED -> "approximate"
+            else -> "missing"
+        })
+        .put("backgroundLocationGranted", hasBackgroundLocationPermission())
+        .put("notificationsGranted", hasNotificationPermission())
+        .put("locationProviderEnabled", isLocationProviderEnabled())
+        .put("serviceRunning", running)
+        .put("lastSampleReceivedAt", lastSampleReceivedAt ?: JSONObject.NULL)
+        .put("backgroundPermissionLabel", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) packageManager.getBackgroundPermissionOptionLabel().toString() else "Allow all the time")
+
     private fun stateMessage(status: String, id: String?, message: String?): String = JSONObject()
         .put("type", "shift_tracker_location:state")
         .put("status", status)
+        .put("diagnostic", diagnostic)
+        .put("diagnostics", diagnosticsJson())
         .apply { if (id != null) put("deliveryId", id) }
         .apply { if (message != null) put("message", message) }
         .toString()

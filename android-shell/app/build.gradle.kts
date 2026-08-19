@@ -17,8 +17,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "2.1.0"
+        versionCode = 2
+        versionName = "2.1.1"
     }
 
     compileOptions {
