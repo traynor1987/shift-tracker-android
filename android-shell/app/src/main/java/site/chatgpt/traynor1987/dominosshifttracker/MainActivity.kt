@@ -114,13 +114,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendShellReady() {
-        val payload = JSONObject()
-            .put("type", "shift_tracker_shell:ready")
-            .put("shellVersion", BuildConfig.VERSION_NAME)
-            .put("bridgeVersion", BRIDGE_VERSION)
-            .put("trustedOrigin", TRUSTED_ORIGIN)
-            .put("trackingActive", DeliveryLocationService.isRunning())
-            .toString()
+        val payload = JSONObject().apply {
+            put("type", "shift_tracker_shell:ready")
+            put("shellVersion", BuildConfig.VERSION_NAME)
+            put("bridgeVersion", BRIDGE_VERSION)
+            put("trustedOrigin", TRUSTED_ORIGIN)
+            put("trackingActive", DeliveryLocationService.isRunning())
+        }.toString()
         postNativeMessage(payload)
     }
 
@@ -183,7 +183,7 @@ class MainActivity : ComponentActivity() {
 
     private fun hasPermission(permission: String) = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != LOCATION_PERMISSION_REQUEST) return
         val deliveryId = pendingStartDeliveryId ?: return

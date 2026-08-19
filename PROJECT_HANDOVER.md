@@ -108,10 +108,18 @@ GPS recovery file is temporary and separate from PWA history.
   toolchain of 17. This matches the existing Java 17 Actions environment and
   fixes the `compileDebugJavaWithJavac` 1.8 versus `compileDebugKotlin` 17
   incompatibility reported by the first cloud build.
+- Cloud Build #2 reached Kotlin compilation and exposed four `MainActivity.kt`
+  errors. The fix enables Android `BuildConfig` generation, uses a typed
+  `JSONObject.apply` payload builder for the shell-ready message, and matches
+  the current `ComponentActivity` permission callback signature with
+  `Array<String>`. Exact-origin bridge checks, hosted-PWA loading, runtime
+  permissions, native foreground GPS, canonical PWA ingestion, browser-GPS
+  suppression, and encrypted recovery storage are unchanged.
 - No release signing, keystore, signing password, or secret is included.
-- The first cloud build reached Kotlin compilation but failed on the JVM target
-  mismatch above. The configuration fix is applied; the cloud build still
-  needs to be retried and a real Fold test remains outstanding.
+- The first cloud build failed on the JVM target mismatch above, and Cloud
+  Build #2 failed on the `MainActivity.kt` issues above. The fixes are applied;
+  the cloud build still needs to be retried and a real Fold test remains
+  outstanding.
 - No real Fold test has been completed.
 
 ## Build kit contents

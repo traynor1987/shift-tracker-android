@@ -9,6 +9,10 @@ android {
     namespace = "site.chatgpt.traynor1987.dominosshifttracker"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker"
         minSdk = 26
