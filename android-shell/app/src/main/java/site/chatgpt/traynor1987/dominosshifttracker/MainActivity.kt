@@ -37,9 +37,7 @@ class MainActivity : ComponentActivity() {
         private var activeActivity: MainActivity? = null
 
         /** Only the currently visible, exact-origin activity can receive data. */
-        fun sendNativeMessage(payload: String) {
-            activeActivity?.postNativeMessage(payload)
-        }
+        fun sendNativeMessage(payload: String): Boolean = activeActivity?.postNativeMessage(payload) ?: false
     }
 
     private lateinit var webView: WebView
@@ -142,9 +140,11 @@ class MainActivity : ComponentActivity() {
         postNativeMessage(payload)
     }
 
-    private fun postNativeMessage(payload: String) {
-        if (!::webView.isInitialized || !isTrustedUri(Uri.parse(webView.url ?: ""))) return
-        WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
+    private fun postNativeMessage(payload: String): Boolean {
+        if (!::webView.isInitialized || !isTrustedUri(Uri.parse(webView.url ?: ""))) return false
+        return runCatching {
+            WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
+        }.isSuccess
     }
 
     private fun requestNativeLocationStart(rawDeliveryId: String?) {
@@ -301,6 +301,10 @@ class MainActivity : ComponentActivity() {
         .put("serviceRunning", DeliveryLocationService.isRunning())
         .put("lastSampleReceivedAt", DeliveryLocationService.lastSampleReceivedAt() ?: JSONObject.NULL)
         .put("backgroundPermissionLabel", backgroundPermissionLabel())
+        .apply {
+            val pipeline = DeliveryLocationService.pipelineDiagnostics()
+            pipeline.keys().forEach { key -> put(key, pipeline.get(key)) }
+        }
 
     private fun currentDiagnosticCode(): String {
         val serviceCode = DeliveryLocationService.diagnosticCode()

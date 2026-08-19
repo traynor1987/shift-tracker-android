@@ -7,12 +7,12 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version in current source:** **2.1.2** (`lib/nativeBridge.ts` and the
+- **Web version in current source:** **2.1.3** (`lib/nativeBridge.ts` and the
   About panel). The older lowercase `project_handover.md` records Build 215;
-  a literal Build 217 marker was not found in the current source, so 2.1.2 is
+  a literal Build 217 marker was not found in the current source, so 2.1.3 is
   the version to trust for this checkout.
-- **Android shell version:** **2.1.2** (`android-shell/app/build.gradle.kts`),
-  versionCode 3, bridge version 1. The bridge version stays compatible so
+- **Android shell version:** **2.1.3** (`android-shell/app/build.gradle.kts`),
+  versionCode 4, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
@@ -48,7 +48,7 @@ new APK. Stage 3 camera work has not started.
 - Cleartext, file access, and content access are disabled.
 - Web and shell versions are reported independently.
 
-### Stage 2 — startup diagnostics and staged permissions patched, real-device first sample still pending
+### Stage 2 — foreground lifecycle proven; first native callback still pending
 
 - `SINGLE`/`DOUBLE` starts the native foreground location service.
 - `DELIVERED` leaves native tracking active for the return journey.
@@ -88,6 +88,24 @@ new APK. Stage 3 camera work has not started.
   ownership before starting a delivery and does not show the browser GPS
   permission prompt; normal browser/PWA mode keeps its existing prompt and
   `watchPosition` fallback.
+- APK 2.1.2 proved foreground-service startup and background/screen-lock
+  survival on a real Fold: starting Single posted the persistent “Shift Tracker
+  delivery GPS” notification and the service remained active through more than
+  one minute of screen lock. After almost three minutes, however, no first
+  native point arrived. This means the remaining fault is specifically between
+  the fused request and PWA ingestion, not the permission or service lifecycle.
+- The 2.1.3 diagnostic patch keeps that lifecycle unchanged and exposes each
+  pipeline checkpoint without putting coordinates in diagnostics: location
+  update request accepted/rejected; provider availability; cached last-location
+  availability; fresh current-location availability; callback count; raw fix
+  timestamp/accuracy/provider; validation rejection; encrypted recovery append;
+  native trusted-WebView dispatch; PWA receipt; and canonical-ingestion result.
+  It asks Fused Location Provider for a single current high-accuracy fix in
+  addition to the existing continuous high-accuracy request. A cached location
+  is used only if its elapsed-realtime age is at most 30 seconds and its
+  supplied accuracy is at most 100 m; original timestamp and accuracy are kept.
+  Continuous samples retain the existing 250 m validation limit. No coordinate
+  is created, interpolated, or time-rewritten.
 
 Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
 Fold. The public hosted PWA now loads in that installed shell. The first Fold
@@ -153,11 +171,14 @@ GPS recovery file is temporary and separate from PWA history.
   Build #2 failed on the `MainActivity.kt` issues above. The fixes are applied;
   Cloud Build #3 subsequently succeeded and its debug APK was installed on a
   real Samsung Fold.
-- The current public-Site Fold test has passed the hosted-PWA loading step but
-  has not yet received the first native sample. Background/screen-lock GPS,
-  notification persistence, recovery delivery, and duplicate-sample behavior
-  remain unverified until the 2.1.2 permission-flow patch is installed and
-  tested.
+- Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
+  Fold. APK 2.1.2 then proved the persistent notification and locked-screen
+  foreground-service lifecycle, but still received no first native location
+  callback after nearly three minutes. The next cloud build is 2.1.3, which is
+  narrowly limited to fused-provider/bridge/ingestion diagnostics and a
+  validated initial-fix request. Background-GPS sample delivery, recovery
+  delivery, and duplicate-sample behaviour remain unverified until it is
+  installed and tested.
 - Local `npm test` remains **84 passed, 0 failed**. `npm run lint` completes with
   the repository's existing warnings and no errors. The checkout has no Gradle
   wrapper or local `gradle` executable, so `:app:assembleDebug` must be verified
@@ -182,10 +203,13 @@ data.
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check web version 2.1.2 and Android shell 2.1.2 in About.
+2. Check web version 2.1.3 and Android shell 2.1.3 in About.
 3. Start a test Single delivery and confirm the foreground notification.
-4. Read the diagnostic line: bridge, foreground precision, background setting,
-   FGS state, and provider state are shown without coordinates.
+4. Read the diagnostic lines: bridge, foreground precision, background setting,
+   FGS state and provider state, then request acceptance, provider availability,
+   current/last fix status, callback count, recovery append, dispatch, PWA
+   receipt, and canonical ingestion. Raw timestamp/accuracy/provider are shown;
+   no coordinates are shown.
 5. Move safely, lock the screen, keep moving, unlock, and press Delivered.
 6. Confirm tracking continues through the return journey.
 7. If desired, choose `Allow all the time` from the in-app Location settings

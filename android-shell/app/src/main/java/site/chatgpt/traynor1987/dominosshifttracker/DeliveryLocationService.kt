@@ -12,15 +12,18 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.content.SharedPreferences
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import org.json.JSONObject
 
 /**
@@ -58,6 +61,19 @@ class DeliveryLocationService : Service() {
 
         fun activeDeliveryId(): String? = instance?.deliveryId
 
+        fun pipelineDiagnostics(): JSONObject = instance?.pipelineDiagnosticsJson() ?: JSONObject()
+            .put("locationUpdateRequest", "not_requested")
+            .put("providerAvailability", "unknown")
+            .put("lastKnownLocation", "not_checked")
+            .put("currentLocation", "not_requested")
+            .put("locationCallbackCount", 0)
+            .put("lastRawFixTimestamp", JSONObject.NULL)
+            .put("lastRawFixAccuracy", JSONObject.NULL)
+            .put("lastRawFixProvider", JSONObject.NULL)
+            .put("lastSampleRejection", JSONObject.NULL)
+            .put("recoveryStore", "not_attempted")
+            .put("nativeMessageDispatch", "not_attempted")
+
         fun flushPendingSamples(context: android.content.Context) {
             instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
                 MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
@@ -75,10 +91,29 @@ class DeliveryLocationService : Service() {
     private var deliveryId: String? = null
     private var requestGeneration = 0L
     private var sampleReceivedForSession = false
+    private var initialFixCancellation: CancellationTokenSource? = null
+    private val observedSampleIds = mutableSetOf<String>()
+    private var locationUpdateRequest = "not_requested"
+    private var providerAvailability = "unknown"
+    private var lastKnownLocation = "not_checked"
+    private var currentLocation = "not_requested"
+    private var locationCallbackCount = 0
+    private var lastRawFixTimestamp: Long? = null
+    private var lastRawFixAccuracy: Float? = null
+    private var lastRawFixProvider: String? = null
+    private var lastSampleRejection: String? = null
+    private var recoveryStore = "not_attempted"
+    private var nativeMessageDispatch = "not_attempted"
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            result.locations.forEach(::recordProviderLocation)
+            locationCallbackCount += 1
+            result.locations.forEach { recordProviderLocation(it, "continuous") }
+        }
+
+        override fun onLocationAvailability(availability: LocationAvailability) {
+            providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
+            emitState("waiting_for_fix", deliveryId, "Location provider availability: $providerAvailability; waiting for a validated fix")
         }
     }
 
@@ -133,6 +168,18 @@ class DeliveryLocationService : Service() {
         deliveryId = requestedDeliveryId
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
+        observedSampleIds.clear()
+        locationUpdateRequest = "requesting"
+        providerAvailability = "unknown"
+        lastKnownLocation = "checking"
+        currentLocation = "requesting"
+        locationCallbackCount = 0
+        lastRawFixTimestamp = null
+        lastRawFixAccuracy = null
+        lastRawFixProvider = null
+        lastSampleRejection = null
+        recoveryStore = "not_attempted"
+        nativeMessageDispatch = "not_attempted"
         diagnostic = "SERVICE_NOT_STARTED"
         preferences.edit().putString(PREF_DELIVERY_ID, requestedDeliveryId).apply()
         val foregroundStarted = runCatching { startForegroundCompat() }.isSuccess
@@ -153,27 +200,106 @@ class DeliveryLocationService : Service() {
             fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnSuccessListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnSuccessListener
+                    locationUpdateRequest = "accepted"
                     diagnostic = "WAITING_FOR_FIX"
-                    emitState("waiting_for_fix", deliveryId, "Foreground service is running; waiting for the first precise location fix")
+                    emitState("waiting_for_fix", deliveryId, "Location-update request accepted; checking provider and requesting the first precise fix")
+                    checkProviderAvailability(generation, requestedDeliveryId)
+                    requestInitialFixes(generation, requestedDeliveryId)
                     flushPendingSamples()
                 }
                 .addOnFailureListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnFailureListener
-                    emitState("service_not_started", deliveryId, "Android location provider could not start")
+                    locationUpdateRequest = "rejected"
+                    emitState("service_not_started", deliveryId, "Android location-update request was rejected")
                     failTracking()
                 }
         }.onFailure {
             if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@onFailure
-            emitState("service_not_started", deliveryId, "Android location provider could not start")
+            locationUpdateRequest = "rejected"
+            emitState("service_not_started", deliveryId, "Android location-update request was rejected")
             failTracking()
         }
     }
 
-    private fun recordProviderLocation(location: Location) {
-        val id = deliveryId ?: return
+    private fun checkProviderAvailability(generation: Long, id: String) {
+        fusedLocationClient.locationAvailability
+            .addOnSuccessListener { availability ->
+                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
+                providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
+                emitState("waiting_for_fix", id, "Location provider availability: $providerAvailability")
+            }
+            .addOnFailureListener {
+                if (generation != requestGeneration || deliveryId != id) return@addOnFailureListener
+                providerAvailability = "unknown"
+                emitState("waiting_for_fix", id, "Location provider availability could not be read; continuous request remains active")
+            }
+    }
+
+    private fun requestInitialFixes(generation: Long, id: String) {
+        fusedLocationClient.lastLocation
+            .addOnSuccessListener { location ->
+                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
+                if (location == null) {
+                    lastKnownLocation = "unavailable"
+                    return@addOnSuccessListener
+                }
+                lastKnownLocation = "available"
+                recordInitialLocation(location, "last_known")
+            }
+            .addOnFailureListener {
+                if (generation == requestGeneration && deliveryId == id) lastKnownLocation = "unavailable"
+            }
+        initialFixCancellation?.cancel()
+        initialFixCancellation = CancellationTokenSource()
+        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, initialFixCancellation!!.token)
+            .addOnSuccessListener { location ->
+                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
+                if (location == null) {
+                    currentLocation = "unavailable"
+                    return@addOnSuccessListener
+                }
+                currentLocation = "available"
+                recordInitialLocation(location, "current")
+            }
+            .addOnFailureListener {
+                if (generation == requestGeneration && deliveryId == id) currentLocation = "unavailable"
+            }
+    }
+
+    private fun recordInitialLocation(location: Location, source: String) {
+        val ageMillis = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L
+        if (ageMillis < 0 || ageMillis > 30_000L) {
+            lastSampleRejection = "${source}_stale_timestamp"
+            return
+        }
+        if (!location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 100f) {
+            lastSampleRejection = "${source}_accuracy_out_of_range"
+            return
+        }
+        recordProviderLocation(location, source)
+    }
+
+    private fun recordProviderLocation(location: Location, source: String) {
+        val id = deliveryId ?: run {
+            lastSampleRejection = "no_active_delivery"
+            return
+        }
+        lastRawFixTimestamp = location.time.takeIf { it > 0L }
+        lastRawFixAccuracy = location.accuracy.takeIf { it.isFinite() }
+        lastRawFixProvider = location.provider?.take(64)
         // Provider timestamps and accuracy are retained exactly as supplied.
         // Invalid provider values are rejected; no current-time interpolation.
-        if (location.time <= 0L || !location.latitude.isFinite() || location.latitude !in -90.0..90.0 || !location.longitude.isFinite() || location.longitude !in -180.0..180.0 || !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f) return
+        val rejection = when {
+            location.time <= 0L -> "invalid_timestamp"
+            !location.latitude.isFinite() || location.latitude !in -90.0..90.0 -> "invalid_latitude"
+            !location.longitude.isFinite() || location.longitude !in -180.0..180.0 -> "invalid_longitude"
+            !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f -> "accuracy_out_of_range"
+            else -> null
+        }
+        if (rejection != null) {
+            lastSampleRejection = rejection
+            return
+        }
         val sample = NativeLocationSample(
             sampleId = "$id:${location.time}",
             deliveryId = id,
@@ -184,24 +310,38 @@ class DeliveryLocationService : Service() {
             speed = if (location.hasSpeed() && location.speed.isFinite() && location.speed >= 0f) location.speed else null,
             heading = if (location.hasBearing() && location.bearing.isFinite()) location.bearing else null,
         )
-        sampleStore.append(sample)
+        if (!observedSampleIds.add(sample.sampleId)) {
+            lastSampleRejection = "duplicate_timestamp"
+            return
+        }
+        if (!sampleStore.append(sample)) {
+            recoveryStore = "append_failed"
+            lastSampleRejection = "recovery_store_append_failed"
+            return
+        }
+        recoveryStore = "appended"
+        lastSampleRejection = null
         if (!sampleReceivedForSession) {
             sampleReceivedForSession = true
             lastSampleReceivedAt = location.time
             diagnostic = "SAMPLE_RECEIVED"
+            dispatchSample(sample)
             emitState("sample_received", id, "Native GPS sample received and sent to the hosted PWA")
+            return
         }
-        MainActivity.sendNativeMessage(sampleMessage(sample))
+        dispatchSample(sample)
     }
 
     fun flushPendingSamples() {
-        sampleStore.pending().forEach { sample -> MainActivity.sendNativeMessage(sampleMessage(sample)) }
+        sampleStore.pending().forEach(::dispatchSample)
     }
 
     fun acknowledge(sampleId: String) = sampleStore.acknowledge(sampleId)
 
     private fun stopTracking() {
         requestGeneration += 1
+        initialFixCancellation?.cancel()
+        initialFixCancellation = null
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         diagnostic = "STOPPED"
@@ -216,6 +356,8 @@ class DeliveryLocationService : Service() {
 
     private fun failTracking() {
         requestGeneration += 1
+        initialFixCancellation?.cancel()
+        initialFixCancellation = null
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         deliveryId = null
@@ -225,6 +367,7 @@ class DeliveryLocationService : Service() {
     }
 
     override fun onDestroy() {
+        initialFixCancellation?.cancel()
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         if (instance === this) instance = null
@@ -304,6 +447,27 @@ class DeliveryLocationService : Service() {
         .put("serviceRunning", running)
         .put("lastSampleReceivedAt", lastSampleReceivedAt ?: JSONObject.NULL)
         .put("backgroundPermissionLabel", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) packageManager.getBackgroundPermissionOptionLabel().toString() else "Allow all the time")
+        .apply {
+            val pipeline = pipelineDiagnosticsJson()
+            pipeline.keys().forEach { key -> put(key, pipeline.get(key)) }
+        }
+
+    private fun pipelineDiagnosticsJson(): JSONObject = JSONObject()
+        .put("locationUpdateRequest", locationUpdateRequest)
+        .put("providerAvailability", providerAvailability)
+        .put("lastKnownLocation", lastKnownLocation)
+        .put("currentLocation", currentLocation)
+        .put("locationCallbackCount", locationCallbackCount)
+        .put("lastRawFixTimestamp", lastRawFixTimestamp ?: JSONObject.NULL)
+        .put("lastRawFixAccuracy", lastRawFixAccuracy?.toDouble() ?: JSONObject.NULL)
+        .put("lastRawFixProvider", lastRawFixProvider ?: JSONObject.NULL)
+        .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
+        .put("recoveryStore", recoveryStore)
+        .put("nativeMessageDispatch", nativeMessageDispatch)
+
+    private fun dispatchSample(sample: NativeLocationSample) {
+        nativeMessageDispatch = if (MainActivity.sendNativeMessage(sampleMessage(sample))) "dispatched" else "bridge_not_connected"
+    }
 
     private fun stateMessage(status: String, id: String?, message: String?): String = JSONObject()
         .put("type", "shift_tracker_location:state")

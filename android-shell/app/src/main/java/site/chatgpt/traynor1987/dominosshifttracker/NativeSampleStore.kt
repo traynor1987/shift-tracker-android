@@ -62,12 +62,12 @@ class NativeSampleStore(private val context: Context) {
     }
 
     @Synchronized
-    fun append(sample: NativeLocationSample) {
+    fun append(sample: NativeLocationSample): Boolean {
         val samples = read().toMutableList()
-        if (samples.any { it.sampleId == sample.sampleId }) return
+        if (samples.any { it.sampleId == sample.sampleId }) return false
         samples.add(sample)
         while (samples.size > MAX_SAMPLES) samples.removeAt(0)
-        write(samples)
+        return write(samples)
     }
 
     @Synchronized
@@ -98,12 +98,11 @@ class NativeSampleStore(private val context: Context) {
         }.getOrElse { emptyList() }
     }
 
-    private fun write(samples: List<NativeLocationSample>) {
+    private fun write(samples: List<NativeLocationSample>): Boolean {
         if (samples.isEmpty()) {
-            context.deleteFile(FILE_NAME)
-            return
+            return !File(context.filesDir, FILE_NAME).exists() || context.deleteFile(FILE_NAME)
         }
-        runCatching {
+        return runCatching {
             val json = JSONArray().apply { samples.forEach { put(it.toJson()) } }.toString().toByteArray(Charsets.UTF_8)
             val iv = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -112,7 +111,7 @@ class NativeSampleStore(private val context: Context) {
             val temporary = File(context.filesDir, "$FILE_NAME.tmp")
             temporary.writeText(Base64.encodeToString(packed, Base64.NO_WRAP))
             temporary.renameTo(File(context.filesDir, FILE_NAME))
-        }
+        }.getOrDefault(false)
     }
 
     private fun key(): SecretKey {
