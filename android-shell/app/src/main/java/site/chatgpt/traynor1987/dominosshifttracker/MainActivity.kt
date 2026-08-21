@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private var backgroundSettingsRequested = false
     private var pendingBackgroundPermissionRequest = false
     private var pendingBackgroundDeliveryId: String? = null
+    private var trustedReplyProxy: JavaScriptReplyProxy? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var cameraCaptureUri: Uri? = null
     private var cameraCaptureFile: File? = null
@@ -132,6 +133,7 @@ class MainActivity : ComponentActivity() {
         // Do not stop the foreground service here. Screen-off/background
         // lifecycle changes must not end an active delivery route.
         if (activeActivity === this) activeActivity = null
+        trustedReplyProxy = null
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         pendingFileSave?.let { sendFileSaveResult(it.requestId, "cancelled", "The save was cancelled") }
@@ -166,6 +168,11 @@ class MainActivity : ComponentActivity() {
                     replyProxy: JavaScriptReplyProxy,
                 ) {
                     if (!isMainFrame || !isTrustedUri(sourceOrigin)) return
+                    // AndroidX binds this proxy 1:1 to the injected bridge
+                    // object in the exact trusted main frame. Use it for every
+                    // native reply instead of sending unrelated window
+                    // messages whose JavaScript origin is not the page origin.
+                    trustedReplyProxy = replyProxy
                     handleBridgeMessage(message.data)
                 }
             },
@@ -205,7 +212,8 @@ class MainActivity : ComponentActivity() {
     private fun postNativeMessage(payload: String): Boolean {
         if (!::webView.isInitialized || !isTrustedUri(Uri.parse(webView.url ?: ""))) return false
         return runCatching {
-            WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
+            trustedReplyProxy?.postMessage(payload)
+                ?: WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
         }.isSuccess
     }
 
@@ -482,6 +490,11 @@ class MainActivity : ComponentActivity() {
         uri.scheme == "https" && uri.host == TRUSTED_HOST && uri.port == -1
 
     private inner class TrustedOriginClient : WebViewClient() {
+        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+            trustedReplyProxy = null
+            super.onPageStarted(view, url, favicon)
+        }
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (!request.isForMainFrame) return false
             if (isTrustedUri(request.url)) return false

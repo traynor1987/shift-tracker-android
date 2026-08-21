@@ -7,12 +7,10 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version in current source:** **2.1.3** (`lib/nativeBridge.ts` and the
-  About panel). The older lowercase `project_handover.md` records Build 215;
-  a literal Build 217 marker was not found in the current source, so 2.1.3 is
-  the version to trust for this checkout.
-- **Android shell version:** **2.1.3** (`android-shell/app/build.gradle.kts`),
-  versionCode 4, bridge version 1. The bridge version stays compatible so
+- **Web version paired with this shell:** **2.1.12** (`lib/nativeBridge.ts` and
+  the About panel in the hosted PWA checkout).
+- **Android shell version:** **2.2.1** (`android-shell/app/build.gradle.kts`),
+  versionCode 6, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
@@ -203,7 +201,7 @@ data.
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check web version 2.1.3 and Android shell 2.1.3 in About.
+2. Check web version 2.1.12 and Android shell 2.2.1 in About.
 3. Start a test Single delivery and confirm the foreground notification.
 4. Read the diagnostic lines: bridge, foreground precision, background setting,
    FGS state and provider state, then request acceptance, provider availability,
@@ -289,3 +287,35 @@ data.
 5. Take and choose a cleaning photo. Export a backup, import it, validate it,
    confirm restore, and separately export CSV. Cancelling any Android picker
    must leave existing app data unchanged.
+
+## Android shell 2.2.1 — exact-origin reply-channel GPS fix
+
+- Real Fold testing of 2.2.0 proved the camera picker and staged `Allow all the
+  time` permission flow, but an active Single still remained at `WAITING FOR
+  GPS`. The native service could be commanded through the injected
+  `ShiftTrackerNative` object, while its replies were sent separately with
+  `WebViewCompat.postWebMessage`; the PWA correctly refused to treat that
+  unrelated page-level message as a reply from its exact-origin bridge.
+- Android now retains the `JavaScriptReplyProxy` supplied only after a message
+  from the exact trusted main frame and sends shell state, service diagnostics,
+  validated GPS samples and file-save results back through that paired proxy.
+  The proxy is cleared on navigation and Activity destruction. Android's
+  documented target-origin `postWebMessage` remains only as a pre-handshake
+  compatibility fallback.
+- Web App 2.1.12 registers the injected object's message listener before its
+  hello command, normalises only replies received through that origin-locked
+  object, and keeps the existing strict origin/schema/size checks for ordinary
+  window messages. This preserves the exact-origin security boundary rather
+  than accepting empty-origin window messages.
+- No fused-provider request, permission, service lifecycle, GPS validation,
+  timestamp, accuracy, encrypted recovery, canonical ingestion, browser GPS,
+  camera, backup/restore, map, hustle or delivery behaviour was changed.
+- Web App 2.1.12 production build and all 91 tests pass; lint has no errors and
+  retains the existing 28 warnings. Local `git diff --check` passes. The
+  connected GitHub integration still cannot create a branch (`403 Resource not
+  accessible by integration`), so no 2.2.1 cloud build was started from Work.
+- Required verification: publish Web App 2.1.12, cloud-build/install Android
+  2.2.1, start Single outdoors, and confirm the UI progresses through native
+  service/waiting diagnostics to `SAMPLE_RECEIVED` and a real mapped point.
+  Then confirm lock-screen continuation, Delivered continuation and Back at
+  Store/Cancel shutdown. No tracking may occur while no delivery is active.

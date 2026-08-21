@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.0
+# Shift Tracker Android shell — 2.2.1
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -9,6 +9,9 @@ Current stage:
 - exact HTTPS origin lock: `dominos-shift-tracker.traynor1987.chatgpt.site`
 - external top-level links open outside the privileged WebView
 - no `addJavascriptInterface`; origin-restricted Web Message bridge only
+- native replies use AndroidX's paired `JavaScriptReplyProxy`, so service
+  states and GPS samples return through that same exact-origin bridge object
+  rather than an unrelated page-level window message
 - bridge reports the independent shell version and brokers only named,
   exact-origin delivery-location messages
 - foreground Android GPS runs only for an active Single/Double delivery;
