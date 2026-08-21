@@ -1,27 +1,38 @@
 package site.chatgpt.traynor1987.dominosshifttracker
 
 import android.Manifest
+import android.app.Activity
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.Settings
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
+import androidx.core.content.FileProvider
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import org.json.JSONObject
+import java.io.File
+import java.nio.charset.StandardCharsets
 
 /**
  * Remote, origin-locked WebView shell. The PWA remains the source of truth;
  * this activity only brokers the native foreground GPS service after a
- * trusted PWA request. No camera or general-purpose file bridge is exposed.
+ * trusted PWA request. User-selected camera/files and explicit JSON/CSV export
+ * use Android system pickers; no broad storage or arbitrary filesystem bridge
+ * is exposed.
  */
 class MainActivity : ComponentActivity() {
     companion object {
@@ -32,6 +43,7 @@ class MainActivity : ComponentActivity() {
         private const val LOCATION_PERMISSION_REQUEST = 2102
         private const val NOTIFICATION_PERMISSION_REQUEST = 2103
         private const val BACKGROUND_LOCATION_PERMISSION_REQUEST = 2104
+        private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
 
         @Volatile
         private var activeActivity: MainActivity? = null
@@ -45,6 +57,49 @@ class MainActivity : ComponentActivity() {
     private var backgroundSettingsRequested = false
     private var pendingBackgroundPermissionRequest = false
     private var pendingBackgroundDeliveryId: String? = null
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var cameraCaptureUri: Uri? = null
+    private var cameraCaptureFile: File? = null
+    private var pendingFileSave: PendingFileSave? = null
+
+    private data class PendingFileSave(
+        val requestId: String,
+        val filename: String,
+        val mimeType: String,
+        val content: String,
+    )
+
+    private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val callback = fileChooserCallback ?: return@registerForActivityResult
+        val selected = if (result.resultCode == Activity.RESULT_OK) {
+            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                ?: cameraCaptureUri?.let { arrayOf(it) }
+        } else null
+        callback.onReceiveValue(selected)
+        fileChooserCallback = null
+        if (selected == null || cameraCaptureUri !in selected) cameraCaptureFile?.delete()
+        cameraCaptureUri = null
+        cameraCaptureFile = null
+    }
+
+    private val createDocumentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val request = pendingFileSave ?: return@registerForActivityResult
+        pendingFileSave = null
+        if (result.resultCode != Activity.RESULT_OK || result.data?.data == null) {
+            sendFileSaveResult(request.requestId, "cancelled", "No file was replaced or created")
+            return@registerForActivityResult
+        }
+        val uri = result.data!!.data!!
+        runCatching {
+            contentResolver.openOutputStream(uri, "w")?.use { output ->
+                output.write(request.content.toByteArray(StandardCharsets.UTF_8))
+            } ?: error("Android did not provide a writable destination")
+        }.onSuccess {
+            sendFileSaveResult(request.requestId, "saved", "Saved with the Android document picker")
+        }.onFailure {
+            sendFileSaveResult(request.requestId, "error", "Android could not write the selected file")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +132,11 @@ class MainActivity : ComponentActivity() {
         // Do not stop the foreground service here. Screen-off/background
         // lifecycle changes must not end an active delivery route.
         if (activeActivity === this) activeActivity = null
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        pendingFileSave?.let { sendFileSaveResult(it.requestId, "cancelled", "The save was cancelled") }
+        pendingFileSave = null
+        cameraCaptureFile?.delete()
         super.onDestroy()
     }
 
@@ -88,6 +148,7 @@ class MainActivity : ComponentActivity() {
         view.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         view.settings.setSupportMultipleWindows(false)
         view.webViewClient = TrustedOriginClient()
+        view.webChromeClient = TrustedFileChooser()
 
         // Do not use addJavascriptInterface. AndroidX exposes this object only
         // to the exact allowed HTTPS origin, and every received message is
@@ -121,6 +182,7 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
+            "shift_tracker_file:save" -> requestNativeFileSave(message)
             "shift_tracker_location:ack" -> {
                 val sampleId = message.optString("sampleId").trim()
                 if (sampleId.isNotEmpty() && sampleId.length <= 256) DeliveryLocationService.acknowledgePendingSample(this, sampleId)
@@ -241,19 +303,58 @@ class MainActivity : ComponentActivity() {
             sendShellReady()
             return
         }
-        // This is deliberately a second request after precise foreground
-        // permission. Android 11+ does not put Allow all the time in the
-        // runtime dialog; its callback is followed by the App Info screen.
+        // This is deliberately a second stage after precise foreground
+        // permission. Android 11+ exposes Allow all the time only in App info;
+        // requesting it again at runtime creates a misleading dead end on many
+        // Samsung builds, so take the user directly to the correct app screen.
         sendNativeState(
             "background_permission_required",
             deliveryId,
             "Precise foreground location is granted. Android will now guide you to App info → Permissions → Location → ${backgroundPermissionLabel()}. Tracking remains limited to an active delivery.",
         )
-        runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) openBackgroundPermissionSettings(deliveryId)
+        else runCatching {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), BACKGROUND_LOCATION_PERMISSION_REQUEST)
-        }.onFailure {
-            openBackgroundPermissionSettings(deliveryId)
+        }.onFailure { openBackgroundPermissionSettings(deliveryId) }
+    }
+
+    private fun requestNativeFileSave(message: JSONObject) {
+        val requestId = message.optString("requestId").trim()
+        val filename = message.optString("filename").trim()
+        val mimeType = message.optString("mimeType").trim().substringBefore(';').lowercase()
+        val content = message.optString("content", null)
+        val safeName = filename.length in 1..120 && filename == File(filename).name &&
+            filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
+        val allowedType = (mimeType == "application/json" && filename.endsWith(".json", true)) ||
+            (mimeType == "text/csv" && filename.endsWith(".csv", true))
+        if (requestId.isEmpty() || requestId.length > 128 || !safeName || !allowedType || content == null || content.length > MAX_EXPORTED_FILE_CHARS) {
+            if (requestId.isNotEmpty() && requestId.length <= 128) sendFileSaveResult(requestId, "error", "The requested export was not an allowed JSON or CSV file")
+            return
         }
+        if (pendingFileSave != null) {
+            sendFileSaveResult(requestId, "error", "Finish the current file save first")
+            return
+        }
+        pendingFileSave = PendingFileSave(requestId, filename, mimeType, content)
+        runCatching {
+            createDocumentLauncher.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = mimeType
+                putExtra(Intent.EXTRA_TITLE, filename)
+            })
+        }.onFailure {
+            pendingFileSave = null
+            sendFileSaveResult(requestId, "error", "Android could not open the document picker")
+        }
+    }
+
+    private fun sendFileSaveResult(requestId: String, status: String, message: String) {
+        postNativeMessage(JSONObject()
+            .put("type", "shift_tracker_file:save_result")
+            .put("requestId", requestId)
+            .put("status", status)
+            .put("message", message)
+            .toString())
     }
 
     private fun openBackgroundPermissionSettings(deliveryId: String?) {
@@ -391,6 +492,66 @@ class MainActivity : ComponentActivity() {
         override fun onPageFinished(view: WebView, url: String) {
             super.onPageFinished(view, url)
             if (isTrustedUri(Uri.parse(url))) sendShellReady()
+        }
+    }
+
+    private inner class TrustedFileChooser : WebChromeClient() {
+        override fun onShowFileChooser(
+            webView: WebView,
+            filePathCallback: ValueCallback<Array<Uri>>,
+            fileChooserParams: FileChooserParams,
+        ): Boolean {
+            if (!isTrustedUri(Uri.parse(webView.url ?: ""))) return false
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = filePathCallback
+            cameraCaptureFile?.delete()
+            cameraCaptureFile = null
+            cameraCaptureUri = null
+
+            val acceptTypes = fileChooserParams.acceptTypes.map { it.substringBefore(';').trim().lowercase() }.filter { it.isNotEmpty() }
+            val imageRequest = acceptTypes.isEmpty() || acceptTypes.any { it == "image/*" || it.startsWith("image/") }
+            val openIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = when {
+                    acceptTypes.isEmpty() -> "*/*"
+                    acceptTypes.size == 1 -> acceptTypes.first()
+                    else -> "*/*"
+                }
+                if (acceptTypes.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+            }
+            val cameraIntent = if (imageRequest) createCameraIntent() else null
+            val launchIntent = if (fileChooserParams.isCaptureEnabled && cameraIntent != null) cameraIntent else Intent(Intent.ACTION_CHOOSER).apply {
+                putExtra(Intent.EXTRA_INTENT, openIntent)
+                putExtra(Intent.EXTRA_TITLE, if (imageRequest) "Take or choose a photo" else "Choose a file")
+                if (cameraIntent != null) putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+            }
+            return runCatching { fileChooserLauncher.launch(launchIntent) }.fold(
+                onSuccess = { true },
+                onFailure = {
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = null
+                    cameraCaptureFile?.delete()
+                    cameraCaptureFile = null
+                    cameraCaptureUri = null
+                    false
+                },
+            )
+        }
+
+        private fun createCameraIntent(): Intent? {
+            val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            if (cameraIntent.resolveActivity(packageManager) == null) return null
+            val directory = File(cacheDir, "shift-tracker-camera").apply { mkdirs() }
+            val output = File.createTempFile("delivery-photo-", ".jpg", directory)
+            val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", output)
+            cameraCaptureFile = output
+            cameraCaptureUri = uri
+            return cameraIntent.apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                clipData = ClipData.newRawUri("Shift Tracker photo", uri)
+            }
         }
     }
 }

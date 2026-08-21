@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — Stage 2
+# Shift Tracker Android shell — 2.2.0
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -20,7 +20,12 @@ Current stage:
   Back at Store or Cancel stops it and removes the notification
 - browser `watchPosition` remains the fallback in normal PWA/browser mode and
   is suppressed while the native bridge has an active/requested delivery
-- no camera, photo picker, arbitrary file bridge or existing PWA data migration
+- user-initiated photo capture and file selection use Android's camera/document
+  apps through `WebChromeClient`; no camera, media-library or storage permission
+  is requested by Shift Tracker
+- privacy-sanitised JSON backups and CSV exports use Android's create-document
+  picker; imports use the existing PWA validation and explicit restore step
+- the launcher uses the same Shift Tracker icon as the hosted PWA
 
 The native shell is still a thin remote WebView. Web publishes remain
 independent: after publishing the hosted PWA, use **Refresh App** in the
@@ -63,3 +68,19 @@ The easiest phone workflow is:
 Normal hosted-PWA changes still use ChatGPT Work → Publish → Refresh App. A
 new APK is needed only when this native shell, its permissions or its Android
 dependencies change.
+
+## Permission and tracking behaviour
+
+Foreground precise location is requested first. `Allow all the time` is a
+separate, user-initiated capability: on Android 11+ the PWA's Route recording
+settings explain the reason and the shell opens this app's Android settings,
+where the user can choose the localized background-location option. The grant
+does not start continuous tracking. Single/Double starts the location
+foreground service; Delivered keeps it running; Back at Store or Cancel stops
+it. With no active delivery the service is stopped and no location is sampled.
+
+The shell keeps `allowFileAccess=false`, `allowContentAccess=false`, cleartext
+disabled and the exact-origin Web Message allow-list. Camera and document
+operations require a visible system picker and return only the URI the user
+selected. JSON/CSV export is limited by name, MIME type and size and writes
+only to the destination chosen in Android's document picker.

@@ -218,3 +218,74 @@ data.
    diagnostic returns to stopped.
 9. Inspect route evidence, timestamps, accuracy, geofence, mileage, traffic,
    OSM, customer detection, and duplicate-sample behaviour.
+
+## Android shell 2.2.0 — bridge, background permission, photos and files
+
+- Root cause identified for the proven-service/no-PWA-point failure: AndroidX
+  `postWebMessage` delivers the native JSON as a JavaScript string, while Web
+  App 2.1.10 accepted only object-valued `event.data`. Web App 2.1.11 now checks
+  the exact production origin, bounds the message, parses the JSON string and
+  then applies the existing per-message schema validation. Native samples keep
+  their provider timestamp and accuracy and still enter the one canonical PWA
+  ingestion path; browser `watchPosition` remains suppressed only when the
+  trusted shell owns the active delivery.
+- The PWA now understands the service's full state vocabulary instead of
+  discarding `service_started`, `waiting_for_fix`, `sample_received`, provider,
+  foreground and background states. Background-permission status is
+  informational and does not incorrectly stop an already-running foreground
+  service.
+- Android 11+ background location is now a direct second-stage App Info flow
+  after precise foreground permission. A Route recording settings card shows
+  the current foreground/background state and lets the user open Android's
+  Location settings. `Allow all the time` remains capability only: no active
+  delivery means no native service and no samples.
+- `WebChromeClient.onShowFileChooser` now supports the existing PWA image and
+  JSON inputs. Photos use the external camera or Android document picker with a
+  cache-only, non-exported `FileProvider`; no CAMERA, READ_MEDIA or storage
+  permission was added. Existing IndexedDB photo retention remains unchanged.
+- Backup/CSV export now uses an exact-origin, named, bounded JSON/CSV message
+  and Android's create-document picker. Restore still uses the PWA's existing
+  JSON validation, migration, confirmation and replacement path. Browser/PWA
+  mode keeps the original Blob download and file-input behaviour. Android OS
+  automatic backup remains disabled so WebView/customer data is not silently
+  copied to a cloud backup.
+- Android version is 2.2.0 (`versionCode` 5). The launcher icon is the same
+  current Shift Tracker icon used by the PWA.
+
+### Audit status
+
+- Exact-origin bridge, HTTPS-only loading, external navigation, mixed-content
+  blocking, disabled WebView file/content URL access, encrypted bounded native
+  recovery and active-delivery-only service lifecycle remain intact.
+- No OpenAI secret, Google geocoding secret, customer record, GPS history,
+  photo, backup file, keystore or signing secret is included in the Android
+  repository. The shell adds no broad camera/media/storage permission.
+- PWA shift/settings/history stay in WebView localStorage; photo blobs stay in
+  IndexedDB with the existing retention policy. Portable JSON backups contain
+  the existing privacy-sanitised app data and route evidence but intentionally
+  do not contain photo blobs or separately stored API credentials.
+- Web App 2.1.11 production build and all 90 tests pass. The local environment
+  has Java 17 but no Gradle executable/wrapper, so Android compilation must be
+  verified by the existing Java 17 GitHub Actions workflow before installation.
+- Security finding outside this Android patch: the public Site's Nova and
+  Google geocoding endpoints keep their keys server-side, but their usage fuses
+  are browser-local rather than a server-enforced per-user quota. Same-origin
+  browser policy is not protection against direct scripted requests. Do not
+  treat those endpoints as abuse-resistant until hosting provides an app-owned
+  authentication or server-side rate-limit boundary. The user-entered Google
+  Maps JavaScript key is necessarily visible to the browser and must remain
+  restricted to the production site origin and only the required APIs.
+
+### Next real-device verification
+
+1. Cloud-build Android 2.2.0 and install it over the existing debug APK.
+2. Refresh the hosted PWA and verify About shows Web App 2.1.11 and Android
+   Shell 2.2.0 with the same Shift Tracker launcher icon.
+3. In Settings → GPS & Routes → Route recording, open Android Location
+   settings and choose Allow all the time with Precise location on.
+4. Start Single/Double and confirm the notification, first real GPS point,
+   Home/app-switch/lock continuity, Delivered continuation, and Back at
+   Store/Cancel stop behaviour. Confirm no notification or samples when idle.
+5. Take and choose a cleaning photo. Export a backup, import it, validate it,
+   confirm restore, and separately export CSV. Cancelling any Android picker
+   must leave existing app data unchanged.
