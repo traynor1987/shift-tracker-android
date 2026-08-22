@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.2
+# Shift Tracker Android shell — 2.2.3
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -96,3 +96,13 @@ the encrypted recovery journal more than once. Already-journaled samples are
 now treated as recoverable pending work, genuine storage failures remain
 retryable, and encrypted file replacement uses Android `AtomicFile` rollback.
 Provider coordinates, timestamps, accuracy, speed and heading are unchanged.
+
+## Android 2.2.3 Keystore persistence fix
+
+Android 2.2.3 lets Android Keystore generate the required randomized AES-GCM
+encryption IV and stores that returned IV with the encrypted recovery journal.
+The previous caller-generated encryption IV was rejected by Keystore with
+`InvalidAlgorithmParameterException`. If recovery persistence ever fails for a
+different reason while the exact-origin bridge is connected, the valid sample
+is now dispatched live and the persistence failure remains visible in native
+diagnostics. Background recovery still uses the encrypted journal normally.

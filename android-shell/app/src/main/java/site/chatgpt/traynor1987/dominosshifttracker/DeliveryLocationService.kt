@@ -332,6 +332,25 @@ class DeliveryLocationService : Service() {
             is NativeSampleStore.AppendResult.Failed -> {
                 recoveryStore = "append_failed:${result.reason}"
                 lastSampleRejection = "recovery_store_${result.reason}"
+                // Recovery protects samples while the WebView is unavailable,
+                // but a local persistence problem must not discard an
+                // otherwise valid live fix when the exact-origin bridge is
+                // connected. If live dispatch also fails, leave the sample
+                // unobserved so the next real provider callback can retry.
+                if (dispatchSample(sample)) {
+                    recoveryStore = "append_failed_live_dispatched:${result.reason}"
+                    observedSampleIds.add(sample.sampleId)
+                    lastSampleRejection = null
+                    val firstSample = !sampleReceivedForSession
+                    sampleReceivedForSession = true
+                    lastSampleReceivedAt = sample.timestampEpochMs
+                    diagnostic = "SAMPLE_RECEIVED"
+                    if (firstSample) emitState(
+                        "sample_received",
+                        id,
+                        "Native GPS sample delivered live; encrypted recovery remains unavailable and is reported in diagnostics",
+                    )
+                }
                 return
             }
         }
@@ -349,7 +368,7 @@ class DeliveryLocationService : Service() {
     }
 
     fun flushPendingSamples() {
-        sampleStore.pending().forEach(::dispatchSample)
+        sampleStore.pending().forEach { dispatchSample(it) }
     }
 
     fun acknowledge(sampleId: String) = sampleStore.acknowledge(sampleId)
@@ -481,8 +500,10 @@ class DeliveryLocationService : Service() {
         .put("recoveryStore", recoveryStore)
         .put("nativeMessageDispatch", nativeMessageDispatch)
 
-    private fun dispatchSample(sample: NativeLocationSample) {
-        nativeMessageDispatch = if (MainActivity.sendNativeMessage(sampleMessage(sample))) "dispatched" else "bridge_not_connected"
+    private fun dispatchSample(sample: NativeLocationSample): Boolean {
+        val dispatched = MainActivity.sendNativeMessage(sampleMessage(sample))
+        nativeMessageDispatch = if (dispatched) "dispatched" else "bridge_not_connected"
+        return dispatched
     }
 
     private fun stateMessage(status: String, id: String?, message: String?): String = JSONObject()

@@ -7,7 +7,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -128,9 +127,14 @@ class NativeSampleStore(private val context: Context) {
         var output: java.io.FileOutputStream? = null
         return try {
             val json = JSONArray().apply { samples.forEach { put(it.toJson()) } }.toString().toByteArray(Charsets.UTF_8)
-            val iv = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key(), GCMParameterSpec(128, iv))
+            // Android Keystore AES-GCM keys require randomized encryption and
+            // reject caller-supplied encryption IVs. Let Keystore generate the
+            // nonce, then persist that exact IV beside the ciphertext. The
+            // stored IV is supplied only when decrypting above.
+            cipher.init(Cipher.ENCRYPT_MODE, key())
+            val iv = cipher.iv
+            check(iv != null && iv.size == IV_BYTES) { "Android Keystore returned an invalid GCM IV" }
             val packed = iv + cipher.doFinal(json)
             val stream = file.startWrite()
             output = stream
