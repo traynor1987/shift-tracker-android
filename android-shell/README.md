@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.3
+# Shift Tracker Android shell — 2.2.4
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -106,3 +106,25 @@ The previous caller-generated encryption IV was rejected by Keystore with
 different reason while the exact-origin bridge is connected, the valid sample
 is now dispatched live and the persistence failure remains visible in native
 diagnostics. Background recovery still uses the encrypted journal normally.
+
+## Android 2.2.4 status follow-up
+
+Real-device testing on a Samsung Fold has now proved the complete native path:
+fused fixes are acquired, encrypted recovery append succeeds, the exact-origin
+bridge dispatches them, canonical PWA ingestion accepts them, route points are
+stored, and the store geofence exit is detected. Android 2.2.4 does not change
+that working pipeline. It keeps `lastSampleReceivedAt` current for every valid
+sample and prevents temporary fused-provider availability callbacks from
+reporting `WAITING_FOR_FIX` after a sample has already been accepted.
+
+The paired hosted PWA 2.1.14 suppresses browser installation prompts only when
+the trusted native bridge object is present, shows installed-native status,
+and presents Break / Clock out in a professional upward-opening action tray
+above the fixed navigation. Normal browser/PWA installation remains unchanged.
+
+Shell 2.2.4 also fixes an intermittent all-black WebView after Android reclaimed
+or recreated the Activity. The shell now explicitly saves/restores WebView
+state, falls back to the exact trusted production URL when no page was restored,
+resumes the WebView renderer with the Activity, and recreates only the WebView
+if Android reports that its renderer exited. App-level WebView storage remains
+intact, so PWA data, backup/restore and hosted refresh behavior are unchanged.

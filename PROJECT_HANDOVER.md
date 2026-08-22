@@ -7,10 +7,10 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version paired with this shell:** **2.1.12** (`lib/nativeBridge.ts` and
+- **Web version paired with this shell:** **2.1.14** (`lib/nativeBridge.ts` and
   the About panel in the hosted PWA checkout).
-- **Android shell version:** **2.2.3** (`android-shell/app/build.gradle.kts`),
-  versionCode 8, bridge version 1. The bridge version stays compatible so
+- **Android shell version:** **2.2.4** (`android-shell/app/build.gradle.kts`),
+  versionCode 9, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
@@ -46,7 +46,7 @@ new APK. Stage 3 camera work has not started.
 - Cleartext, file access, and content access are disabled.
 - Web and shell versions are reported independently.
 
-### Stage 2 — foreground lifecycle proven; first native callback still pending
+### Stage 2 — native GPS pipeline proven on a real Fold
 
 - `SINGLE`/`DOUBLE` starts the native foreground location service.
 - `DELIVERED` leaves native tracking active for the return journey.
@@ -61,6 +61,32 @@ new APK. Stage 3 camera work has not started.
 - Native samples enter the same canonical PWA ingestion path used by browser
   GPS. Native-active state suppresses the browser watcher in the shell while
   ordinary PWA mode keeps the existing `watchPosition` fallback.
+- Real Samsung Fold testing with Android Shell 2.2.3 proved the full path:
+  precise fused fix received, encrypted recovery append, native dispatch,
+  `NATIVE_SAMPLE_RECEIVED`, `CANONICAL_SAMPLE_ACCEPTED`, route-point append,
+  and store-geofence exit detection. Permission staging, foreground service,
+  screen-lock survival, Delivered return tracking and the exact-origin bridge
+  are therefore no longer the active fault area.
+- Android Shell 2.2.4 changes status reporting only. Every accepted provider
+  sample refreshes `lastSampleReceivedAt`; a temporary fused-provider
+  available/unavailable callback reports the stream as active after the first
+  accepted sample instead of reverting to `WAITING_FOR_FIX`.
+- Hosted PWA 2.1.14 gives canonical ingestion higher status precedence than
+  advisory provider availability. It suppresses `INSTALL PWA` only when the
+  existing exact-origin native bridge is present, replacing it with a
+  non-actionable installed-native status. Browser/PWA install behavior is
+  unchanged.
+- The active-shift Break and Clock out controls now live in a professional
+  upward-opening action tray above the fixed bottom navigation in both the PWA
+  and APK. The collapsed lip remains accessible; opening it overlays the
+  Hustle card without shrinking the main shift UI or changing either action.
+- Shell 2.2.4 fixes the intermittent black APK screen caused by creating a new
+  WebView with a non-null Activity state bundle but neither restoring that
+  WebView state nor loading the trusted URL. It now saves/restores state,
+  resumes the WebView with the Activity, loads the exact trusted production URL
+  when no page can be restored, and recreates only the WebView after a reported
+  renderer exit. WebView app storage and the foreground GPS service are not
+  cleared or restarted by this recovery.
 - Samples are acknowledged by the PWA after ingestion; the native journal is
   temporary recovery storage, not a competing permanent history database.
 - The PWA-to-shell listener is registered before the hello response can arrive.
@@ -106,12 +132,11 @@ new APK. Stage 3 camera work has not started.
   is created, interpolated, or time-rewritten.
 
 Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
-Fold. The public hosted PWA now loads in that installed shell. The first Fold
-test of APK 2.1.1 reached the native diagnostics but remained at the foreground
-permission state, and Android Location settings did not yet expose “Allow all
-the time”. This 2.1.2 patch adds the missing separate background request and
-settings return path. A first native GPS sample is still not real-device-proven;
-the next debug APK must be installed before repeating the test.
+Fold. The public hosted PWA loads in that shell. Subsequent real-device tests
+proved all-time permission, the delivery-scoped foreground service, native
+fused acquisition, encrypted recovery, native dispatch, canonical ingestion,
+route-point storage and geofence exit. Stage 2 is working; Shell 2.2.4 is a
+narrow presentation/diagnostic-state follow-up.
 
 ## GPS and recovery storage
 
@@ -143,9 +168,9 @@ GPS recovery file is temporary and separate from PWA history.
 
 ## Tests and build status
 
-- `npm test`: **84 passed, 0 failed**.
-- The 84 tests include the Android shell contract and Android workflow contract
-  checks.
+- Hosted PWA `npm test`: rendered-preview verification plus **95 tests passed,
+  0 failed**. The suite includes native bridge and Android build-workflow
+  contracts.
 - `git diff --check`: must remain clean before packaging.
 - The repository contains `.github/workflows/android-debug-apk.yml`.
 - Workflow: Java 17, Android SDK platform/build-tools 35, Gradle 8.9,
@@ -169,15 +194,12 @@ GPS recovery file is temporary and separate from PWA history.
   Build #2 failed on the `MainActivity.kt` issues above. The fixes are applied;
   Cloud Build #3 subsequently succeeded and its debug APK was installed on a
   real Samsung Fold.
-- Cloud Build #3 succeeded and its debug APK was installed on a real Samsung
-  Fold. APK 2.1.2 then proved the persistent notification and locked-screen
-  foreground-service lifecycle, but still received no first native location
-  callback after nearly three minutes. The next cloud build is 2.1.3, which is
-  narrowly limited to fused-provider/bridge/ingestion diagnostics and a
-  validated initial-fix request. Background-GPS sample delivery, recovery
-  delivery, and duplicate-sample behaviour remain unverified until it is
-  installed and tested.
-- Local `npm test` remains **84 passed, 0 failed**. `npm run lint` completes with
+- Real-device Android 2.2.3 testing subsequently proved fused acquisition,
+  encrypted recovery append, native dispatch, PWA receipt, canonical
+  acceptance, route-point append and geofence exit. Android 2.2.4 changes only
+  post-fix status precedence and rolling last-sample diagnostics.
+- Local `npm test` passes with **95 tests, 0 failed** plus the rendered-preview
+  check. `npm run lint` completes with
   the repository's existing warnings and no errors. The checkout has no Gradle
   wrapper or local `gradle` executable, so `:app:assembleDebug` must be verified
   by the existing Java 17 GitHub Actions workflow.
@@ -191,17 +213,16 @@ data, GPS history, or build outputs.
 
 ## Exact next step
 
-Run the Android debug workflow for this patch, install the new APK on the Fold,
-start Single/Double, and read the in-app native diagnostic line. It should
-progress from `SERVICE_NOT_STARTED` to `WAITING_FOR_FIX` to `SAMPLE_RECEIVED`.
-Then test Home/app switch/screen lock, Delivered, Back at Store, Cancel, and
-the optional `Allow all the time` settings flow. Do not start Stage 3 or migrate
-data.
+Publish PWA 2.1.14, run the Android debug workflow for Shell 2.2.4, and install
+the APK over the existing app. Confirm the native install status replaces the
+PWA install prompt, the Shift actions lip opens upward above navigation, and a
+temporary provider-availability change no longer returns an accepted delivery
+to `WAITING FOR GPS`. Do not start Stage 3 or migrate data.
 
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check the current hosted web version and Android shell 2.2.3 in About.
+2. Check the current hosted web version 2.1.14 and Android shell 2.2.4 in About.
 3. Start a test Single delivery and confirm the foreground notification.
 4. Read the diagnostic lines: bridge, foreground precision, background setting,
    FGS state and provider state, then request acceptance, provider availability,
@@ -384,3 +405,25 @@ data.
   `nativeDispatch=dispatched`, `lastSampleReceived` is populated, PWA bridge
   receipt/canonical acceptance appear, and the first genuine map point is
   shown. Then verify lock/background continuity and Back at Store shutdown.
+
+## Android shell 2.2.4 — native presentation and status precedence
+
+- Real Fold testing has confirmed that Android 2.2.3 acquires and persists
+  fused fixes, dispatches them through the exact-origin bridge, and reaches
+  canonical PWA ingestion, route storage and store-geofence detection.
+- `lastSampleReceivedAt` now advances for every accepted provider sample.
+  Fused-provider availability callbacks retain their diagnostic value but
+  cannot emit `WAITING_FOR_FIX` after the delivery session has received a
+  valid sample.
+- PWA 2.1.14 similarly retains canonical accepted status when a later advisory
+  provider state arrives. The normal validation, geofence and deterministic
+  route-point rules are unchanged.
+- The trusted bridge suppresses PWA installation controls inside the APK and
+  displays installed-native status. Browser/PWA installation remains enabled.
+- Break and Clock out retain their existing handlers and confirmations inside
+  an upward-opening Shift actions tray above fixed navigation, available in
+  both browser PWA and native shell layouts.
+- Activity/WebView recovery now prevents a reclaimed Activity or exited WebView
+  renderer from leaving a permanent black surface. The recovery reloads only
+  the exact trusted hosted PWA and does not clear localStorage, IndexedDB,
+  backups, photos, permissions or the active delivery foreground service.

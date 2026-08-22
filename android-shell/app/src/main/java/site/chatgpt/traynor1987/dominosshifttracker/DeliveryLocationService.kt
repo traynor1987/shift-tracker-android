@@ -112,8 +112,10 @@ class DeliveryLocationService : Service() {
         }
 
         override fun onLocationAvailability(availability: LocationAvailability) {
+            val activeId = deliveryId ?: return
+            if (!running) return
             providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
-            emitState("waiting_for_fix", deliveryId, "Location provider availability: $providerAvailability; waiting for a validated fix")
+            emitProviderState(activeId, "Location provider availability: $providerAvailability")
         }
     }
 
@@ -226,12 +228,12 @@ class DeliveryLocationService : Service() {
             .addOnSuccessListener { availability ->
                 if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
                 providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
-                emitState("waiting_for_fix", id, "Location provider availability: $providerAvailability")
+                emitProviderState(id, "Location provider availability: $providerAvailability")
             }
             .addOnFailureListener {
                 if (generation != requestGeneration || deliveryId != id) return@addOnFailureListener
                 providerAvailability = "unknown"
-                emitState("waiting_for_fix", id, "Location provider availability could not be read; continuous request remains active")
+                emitProviderState(id, "Location provider availability could not be read; continuous request remains active")
             }
     }
 
@@ -356,10 +358,13 @@ class DeliveryLocationService : Service() {
         }
         observedSampleIds.add(acceptedSample.sampleId)
         lastSampleRejection = null
-        if (!sampleReceivedForSession) {
-            sampleReceivedForSession = true
-            lastSampleReceivedAt = acceptedSample.timestampEpochMs
-            diagnostic = "SAMPLE_RECEIVED"
+        val firstSample = !sampleReceivedForSession
+        sampleReceivedForSession = true
+        // Keep this diagnostic current for every validated provider sample,
+        // not only the first fix in the delivery session.
+        lastSampleReceivedAt = acceptedSample.timestampEpochMs
+        diagnostic = "SAMPLE_RECEIVED"
+        if (firstSample) {
             dispatchSample(acceptedSample)
             emitState("sample_received", id, "Native GPS sample received, safely journaled and offered to the hosted PWA")
             return
@@ -456,6 +461,14 @@ class DeliveryLocationService : Service() {
     private fun emitState(status: String, id: String?, message: String?) {
         diagnostic = diagnosticForStatus(status)
         MainActivity.sendNativeMessage(stateMessage(status, id, message))
+    }
+
+    private fun emitProviderState(id: String?, availabilityMessage: String) {
+        if (sampleReceivedForSession) {
+            emitState("sample_received", id, "$availabilityMessage; validated native GPS stream remains active")
+        } else {
+            emitState("waiting_for_fix", id, "$availabilityMessage; waiting for a validated fix")
+        }
     }
 
     private fun diagnosticForStatus(status: String): String = when (status) {

@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.Settings
 import android.webkit.ValueCallback
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -108,12 +109,25 @@ class MainActivity : ComponentActivity() {
         webView = WebView(this)
         configureWebView(webView)
         setContentView(webView)
-        if (savedInstanceState == null) webView.loadUrl(TRUSTED_ORIGIN)
+        // A newly created WebView is blank even when the Activity receives a
+        // non-null state bundle. Restore the WebView state explicitly; if
+        // Android reclaimed it, load the trusted hosted PWA instead of leaving
+        // a permanent black surface until the task is force-closed.
+        val restored = savedInstanceState?.let { webView.restoreState(it) != null } ?: false
+        if (!restored) webView.loadUrl(TRUSTED_ORIGIN)
     }
 
     override fun onResume() {
         super.onResume()
         activeActivity = this
+        if (::webView.isInitialized) {
+            webView.onResume()
+            webView.resumeTimers()
+            webView.postDelayed({
+                if (!isFinishing && !isDestroyed && webView.url.isNullOrBlank()) webView.loadUrl(TRUSTED_ORIGIN)
+                else webView.invalidate()
+            }, 350L)
+        }
         // Samples can have accumulated while the WebView was backgrounded.
         // They remain encrypted until the trusted page acknowledges them.
         DeliveryLocationService.flushPendingSamples(this)
@@ -129,6 +143,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        if (::webView.isInitialized) webView.onPause()
+        super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::webView.isInitialized) webView.saveState(outState)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onDestroy() {
         // Do not stop the foreground service here. Screen-off/background
         // lifecycle changes must not end an active delivery route.
@@ -139,7 +163,25 @@ class MainActivity : ComponentActivity() {
         pendingFileSave?.let { sendFileSaveResult(it.requestId, "cancelled", "The save was cancelled") }
         pendingFileSave = null
         cameraCaptureFile?.delete()
+        if (::webView.isInitialized) webView.destroy()
         super.onDestroy()
+    }
+
+    private fun recreateWebViewAfterRendererExit(failedView: WebView) {
+        trustedReplyProxy = null
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        cameraCaptureFile?.delete()
+        cameraCaptureFile = null
+        cameraCaptureUri = null
+        if (failedView === webView) {
+            val replacement = WebView(this)
+            configureWebView(replacement)
+            webView = replacement
+            setContentView(replacement)
+            failedView.destroy()
+            replacement.loadUrl(TRUSTED_ORIGIN)
+        } else failedView.destroy()
     }
 
     private fun configureWebView(view: WebView) {
@@ -490,6 +532,11 @@ class MainActivity : ComponentActivity() {
         uri.scheme == "https" && uri.host == TRUSTED_HOST && uri.port == -1
 
     private inner class TrustedOriginClient : WebViewClient() {
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            recreateWebViewAfterRendererExit(view)
+            return true
+        }
+
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
             trustedReplyProxy = null
             super.onPageStarted(view, url, favicon)
