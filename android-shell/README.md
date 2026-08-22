@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.1
+# Shift Tracker Android shell — 2.2.2
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -87,3 +87,12 @@ disabled and the exact-origin Web Message allow-list. Camera and document
 operations require a visible system picker and return only the URI the user
 selected. JSON/CSV export is limited by name, MIME type and size and writes
 only to the destination chosen in Android's document picker.
+
+## Android 2.2.2 GPS recovery fix
+
+Android 2.2.2 keeps the existing Stage 2 lifecycle and exact-origin bridge but
+fixes first-fix delivery when the same fused-provider sample is encountered by
+the encrypted recovery journal more than once. Already-journaled samples are
+now treated as recoverable pending work, genuine storage failures remain
+retryable, and encrypted file replacement uses Android `AtomicFile` rollback.
+Provider coordinates, timestamps, accuracy, speed and heading are unchanged.

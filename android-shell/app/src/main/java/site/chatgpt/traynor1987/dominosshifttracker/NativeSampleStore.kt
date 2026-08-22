@@ -2,6 +2,7 @@ package site.chatgpt.traynor1987.dominosshifttracker
 
 import android.content.Context
 import android.util.Base64
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -61,57 +62,93 @@ class NativeSampleStore(private val context: Context) {
         private const val IV_BYTES = 12
     }
 
+    sealed class AppendResult {
+        data class Appended(val sample: NativeLocationSample) : AppendResult()
+        data class AlreadyPresent(val sample: NativeLocationSample) : AppendResult()
+        data class Failed(val reason: String) : AppendResult()
+    }
+
+    private data class ReadResult(
+        val samples: List<NativeLocationSample>,
+        val failure: String? = null,
+    )
+
     @Synchronized
-    fun append(sample: NativeLocationSample): Boolean {
-        val samples = read().toMutableList()
-        if (samples.any { it.sampleId == sample.sampleId }) return false
+    fun append(sample: NativeLocationSample): AppendResult {
+        val readResult = readResult()
+        if (readResult.failure != null) return AppendResult.Failed(readResult.failure)
+        readResult.samples.firstOrNull { it.sampleId == sample.sampleId }?.let {
+            return AppendResult.AlreadyPresent(it)
+        }
+        val samples = readResult.samples.toMutableList()
         samples.add(sample)
         while (samples.size > MAX_SAMPLES) samples.removeAt(0)
-        return write(samples)
+        return write(samples)?.let { AppendResult.Failed(it) } ?: AppendResult.Appended(sample)
     }
 
     @Synchronized
-    fun pending(): List<NativeLocationSample> = read()
+    fun pending(): List<NativeLocationSample> = readResult().samples
 
     @Synchronized
     fun acknowledge(sampleId: String) {
         if (sampleId.isBlank()) return
-        write(read().filterNot { it.sampleId == sampleId })
+        val readResult = readResult()
+        if (readResult.failure == null) write(readResult.samples.filterNot { it.sampleId == sampleId })
     }
 
     @Synchronized
     fun clear() {
-        context.deleteFile(FILE_NAME)
+        atomicFile().delete()
     }
 
-    private fun read(): List<NativeLocationSample> {
-        val file = File(context.filesDir, FILE_NAME)
-        if (!file.exists()) return emptyList()
+    private fun readResult(): ReadResult {
+        val file = atomicFile()
+        if (!file.baseFile.exists()) return ReadResult(emptyList())
         return runCatching {
-            val packed = Base64.decode(file.readText(), Base64.NO_WRAP)
+            val encoded = file.openRead().use { it.readBytes() }
+            val packed = Base64.decode(encoded, Base64.NO_WRAP)
             if (packed.size <= IV_BYTES) return@runCatching emptyList()
             val iv = packed.copyOfRange(0, IV_BYTES)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
             val json = JSONArray(String(cipher.doFinal(packed.copyOfRange(IV_BYTES, packed.size)), Charsets.UTF_8))
             buildList { for (index in 0 until json.length()) NativeLocationSample.fromJson(json.optJSONObject(index) ?: continue)?.let(::add) }
-        }.getOrElse { emptyList() }
+        }.fold(
+            onSuccess = { ReadResult(it) },
+            onFailure = { ReadResult(emptyList(), failureCode("read", it)) },
+        )
     }
 
-    private fun write(samples: List<NativeLocationSample>): Boolean {
+    /** Returns null on success or a bounded, non-sensitive diagnostic code. */
+    private fun write(samples: List<NativeLocationSample>): String? {
+        val file = atomicFile()
         if (samples.isEmpty()) {
-            return !File(context.filesDir, FILE_NAME).exists() || context.deleteFile(FILE_NAME)
+            return runCatching { file.delete() }.exceptionOrNull()?.let { failureCode("delete", it) }
         }
-        return runCatching {
+        var output: java.io.FileOutputStream? = null
+        return try {
             val json = JSONArray().apply { samples.forEach { put(it.toJson()) } }.toString().toByteArray(Charsets.UTF_8)
             val iv = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key(), GCMParameterSpec(128, iv))
             val packed = iv + cipher.doFinal(json)
-            val temporary = File(context.filesDir, "$FILE_NAME.tmp")
-            temporary.writeText(Base64.encodeToString(packed, Base64.NO_WRAP))
-            temporary.renameTo(File(context.filesDir, FILE_NAME))
-        }.getOrDefault(false)
+            val stream = file.startWrite()
+            output = stream
+            stream.write(Base64.encode(packed, Base64.NO_WRAP))
+            file.finishWrite(stream)
+            output = null
+            null
+        } catch (error: Throwable) {
+            output?.let(file::failWrite)
+            failureCode("write", error)
+        }
+    }
+
+    private fun atomicFile() = AtomicFile(File(context.filesDir, FILE_NAME))
+
+    private fun failureCode(operation: String, error: Throwable): String {
+        val type = error.javaClass.simpleName.lowercase().replace(Regex("[^a-z0-9_]"), "").take(48)
+        return "${operation}_${type.ifEmpty { "error" }}"
     }
 
     private fun key(): SecretKey {

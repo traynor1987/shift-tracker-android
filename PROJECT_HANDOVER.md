@@ -9,8 +9,8 @@ source is authoritative; older reports are historical evidence only.
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
 - **Web version paired with this shell:** **2.1.12** (`lib/nativeBridge.ts` and
   the About panel in the hosted PWA checkout).
-- **Android shell version:** **2.2.1** (`android-shell/app/build.gradle.kts`),
-  versionCode 6, bridge version 1. The bridge version stays compatible so
+- **Android shell version:** **2.2.2** (`android-shell/app/build.gradle.kts`),
+  versionCode 7, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
 
 ## Architecture
@@ -201,7 +201,7 @@ data.
 ## Device test checklist
 
 1. Open the APK and verify the hosted PWA loads.
-2. Check web version 2.1.12 and Android shell 2.2.1 in About.
+2. Check the current hosted web version and Android shell 2.2.2 in About.
 3. Start a test Single delivery and confirm the foreground notification.
 4. Read the diagnostic lines: bridge, foreground precision, background setting,
    FGS state and provider state, then request acceptance, provider availability,
@@ -319,3 +319,33 @@ data.
   service/waiting diagnostics to `SAMPLE_RECEIVED` and a real mapped point.
   Then confirm lock-screen continuation, Delivered continuation and Back at
   Store/Cancel shutdown. No tracking may occur while no delivery is active.
+
+## Android shell 2.2.2 — recovery-journal first-fix correction
+
+- Real Fold diagnostics from Android 2.2.1 proved the fused provider returned
+  a legitimate 7 m fix, but the native pipeline reported `append_failed`, then
+  `duplicate_timestamp`, with dispatch left at `not_attempted`. Permissions,
+  foreground service startup, provider acquisition and the secure reply bridge
+  were therefore working; the failure was after sample creation.
+- `NativeSampleStore.append` now distinguishes a newly appended sample, an
+  identical sample already safely present in the encrypted recovery journal,
+  and a genuine read/write failure. A journaled sample is idempotently
+  dispatched instead of being misclassified as a failed append.
+- The service now marks a provider sample as observed only after it has been
+  appended or recovered. A genuine journal failure therefore remains retryable
+  on the next real provider callback instead of poisoning that timestamp as a
+  duplicate.
+- Journal replacement now uses Android `AtomicFile` while retaining the same
+  AES-GCM Android Keystore encryption and compatible Base64 file format. A
+  failed write is rolled back and emits a bounded, non-sensitive diagnostic
+  code; no coordinates or customer data are added to diagnostics.
+- Android is version 2.2.2 (`versionCode` 7). No PWA source, permission flow,
+  location request, sample values, canonical ingestion, browser suppression,
+  camera, backup/restore, geofence, map, hustle or delivery lifecycle was
+  changed. Single/Double still starts tracking, Delivered keeps it active, and
+  Back at Store/Cancel stops it.
+- Required real-device verification: install the cloud-built 2.2.2 debug APK,
+  start a new Single outdoors, and confirm recovery becomes `appended` or
+  `already_present`, native dispatch becomes `dispatched`, PWA bridge receipt
+  appears, canonical ingestion accepts the original fix, and the live map gets
+  its first genuine point.

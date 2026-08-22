@@ -310,26 +310,42 @@ class DeliveryLocationService : Service() {
             speed = if (location.hasSpeed() && location.speed.isFinite() && location.speed >= 0f) location.speed else null,
             heading = if (location.hasBearing() && location.bearing.isFinite()) location.bearing else null,
         )
-        if (!observedSampleIds.add(sample.sampleId)) {
-            lastSampleRejection = "duplicate_timestamp"
+        // lastLocation, getCurrentLocation and the continuous callback can all
+        // legitimately return the same provider fix. Only suppress a sample
+        // after that exact id has been safely journaled or recovered; a failed
+        // append must remain retryable by the next provider callback.
+        if (sample.sampleId in observedSampleIds) {
             return
         }
-        if (!sampleStore.append(sample)) {
-            recoveryStore = "append_failed"
-            lastSampleRejection = "recovery_store_append_failed"
-            return
+        val acceptedSample = when (val result = sampleStore.append(sample)) {
+            is NativeSampleStore.AppendResult.Appended -> {
+                recoveryStore = "appended"
+                result.sample
+            }
+            is NativeSampleStore.AppendResult.AlreadyPresent -> {
+                // An earlier process/bridge attempt may already have safely
+                // journaled this provider fix. That is idempotent recovery,
+                // not a storage failure: dispatch the stored copy unchanged.
+                recoveryStore = "already_present"
+                result.sample
+            }
+            is NativeSampleStore.AppendResult.Failed -> {
+                recoveryStore = "append_failed:${result.reason}"
+                lastSampleRejection = "recovery_store_${result.reason}"
+                return
+            }
         }
-        recoveryStore = "appended"
+        observedSampleIds.add(acceptedSample.sampleId)
         lastSampleRejection = null
         if (!sampleReceivedForSession) {
             sampleReceivedForSession = true
-            lastSampleReceivedAt = location.time
+            lastSampleReceivedAt = acceptedSample.timestampEpochMs
             diagnostic = "SAMPLE_RECEIVED"
-            dispatchSample(sample)
-            emitState("sample_received", id, "Native GPS sample received and sent to the hosted PWA")
+            dispatchSample(acceptedSample)
+            emitState("sample_received", id, "Native GPS sample received, safely journaled and offered to the hosted PWA")
             return
         }
-        dispatchSample(sample)
+        dispatchSample(acceptedSample)
     }
 
     fun flushPendingSamples() {
