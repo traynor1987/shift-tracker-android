@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
         if (::webView.isInitialized && isTrustedUri(Uri.parse(webView.url ?: ""))) sendShellReady()
         if (backgroundSettingsRequested) {
             backgroundSettingsRequested = false
-            val deliveryId = DeliveryLocationService.activeDeliveryId()
+            val deliveryId = DeliveryLocationService.activeDeliveryId(this)
             if (hasBackgroundLocationPermission()) {
                 sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled; active-delivery tracking can continue after the Activity is hidden")
             } else {
@@ -246,6 +246,7 @@ class MainActivity : ComponentActivity() {
             put("bridgeVersion", BRIDGE_VERSION)
             put("trustedOrigin", TRUSTED_ORIGIN)
             put("trackingActive", DeliveryLocationService.isRunning())
+            put("trackedDeliveryId", DeliveryLocationService.activeDeliveryId(this@MainActivity) ?: JSONObject.NULL)
             put("diagnostics", nativeDiagnostics())
         }.toString()
         postNativeMessage(payload)
@@ -329,11 +330,11 @@ class MainActivity : ComponentActivity() {
 
     private fun requestBackgroundLocation() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasBackgroundLocationPermission()) {
-            sendNativeState("background_permission_granted", DeliveryLocationService.activeDeliveryId(), "${backgroundPermissionLabel()} is already available")
+            sendNativeState("background_permission_granted", DeliveryLocationService.activeDeliveryId(this), "${backgroundPermissionLabel()} is already available")
             sendShellReady()
             return
         }
-        val deliveryId = DeliveryLocationService.activeDeliveryId()
+        val deliveryId = DeliveryLocationService.activeDeliveryId(this)
         if (!hasPreciseLocationPermission()) {
             // Background permission is never requested in the same call as
             // foreground location. Complete the foreground stage first, then
@@ -517,7 +518,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             BACKGROUND_LOCATION_PERMISSION_REQUEST -> {
-                val deliveryId = DeliveryLocationService.activeDeliveryId()
+                val deliveryId = DeliveryLocationService.activeDeliveryId(this)
                 if (hasBackgroundLocationPermission()) sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled")
                 else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) openBackgroundPermissionSettings(deliveryId)
                 else {

@@ -13,7 +13,7 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/shift_tracker_launcher"
-        android:label="Shift Tracker"
+        android:label="${appLabel}"
         android:roundIcon="@mipmap/shift_tracker_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.ShiftTracker"

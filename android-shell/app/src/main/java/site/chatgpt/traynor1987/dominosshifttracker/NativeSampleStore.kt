@@ -89,6 +89,18 @@ class NativeSampleStore(private val context: Context) {
     fun pending(): List<NativeLocationSample> = readResult().samples
 
     @Synchronized
+    fun pendingCount(): Int = readResult().samples.size
+
+    /** A new canonical delivery owns recovery from this point onward. Samples
+     * for older delivery IDs cannot be attached to it and are safely dropped. */
+    @Synchronized
+    fun retainDelivery(deliveryId: String) {
+        if (deliveryId.isBlank()) return
+        val readResult = readResult()
+        if (readResult.failure == null) write(readResult.samples.filter { it.deliveryId == deliveryId })
+    }
+
+    @Synchronized
     fun acknowledge(sampleId: String) {
         if (sampleId.isBlank()) return
         val readResult = readResult()

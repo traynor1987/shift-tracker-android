@@ -1,0 +1,88 @@
+name: Android signed APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android-shell/**"
+      - ".github/workflows/android-signed-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-signed-apk:
+    name: Test and build signed APK
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: android-shell
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Prepare protected release keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SHIFT_TRACKER_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SHIFT_TRACKER_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/shift-tracker-release.jks"
+          chmod 600 "$RUNNER_TEMP/shift-tracker-release.jks"
+          keytool -list -keystore "$RUNNER_TEMP/shift-tracker-release.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null
+
+      - name: Run native tests and assemble signed release
+        env:
+          SHIFT_TRACKER_KEYSTORE_PATH: ${{ runner.temp }}/shift-tracker-release.jks
+          SHIFT_TRACKER_KEYSTORE_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEYSTORE_PASSWORD }}
+          SHIFT_TRACKER_KEY_ALIAS: ${{ secrets.SHIFT_TRACKER_KEY_ALIAS }}
+          SHIFT_TRACKER_KEY_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEY_PASSWORD }}
+        run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :app:assembleRelease
+
+      - name: Verify APK signature and package
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable'"
+          sha256sum "$APK" > "$APK.sha256"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: shift-tracker-signed-apk
+          path: |
+            android-shell/app/build/outputs/apk/release/app-release.apk
+            android-shell/app/build/outputs/apk/release/app-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/shift-tracker-release.jks"

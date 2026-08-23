@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.4
+# Shift Tracker Android shell — 2.2.6
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -34,39 +34,57 @@ The native shell is still a thin remote WebView. Web publishes remain
 independent: after publishing the hosted PWA, use **Refresh App** in the
 installed shell; an APK rebuild is not required for ordinary web changes.
 
-## Cloud debug APK builds
+## Permanent signed APK builds
 
-The repository contains `.github/workflows/android-debug-apk.yml`. It builds
-only when Android-shell files change or when you manually choose **Run
-workflow** in GitHub Actions. The workflow installs Java 17, Android SDK 35
-and Gradle 8.9 on a GitHub-hosted runner, then uploads the automatically
-debug-signed `app-debug.apk` as a short-lived Actions artifact.
+The release application ID is permanently
+`site.chatgpt.traynor1987.dominosshifttracker.stable`. It installs beside the
+legacy 2.2.5 debug APK, so the old WebView data does not need to be deleted
+before the signed app and imported backup have been verified. Every later
+release must keep this application ID, the same signing key and a larger
+`versionCode`; Android can then update it in place normally.
 
-This is deliberately a debug build only. There are no release-signing keys,
-keystores or signing secrets in this project. Do not use the debug APK for
-Play Store distribution.
+The repository contains `.github/workflows/android-signed-apk.yml`. It runs the
+native JVM tests, assembles the release, verifies the APK signature and package
+ID, writes a SHA-256 checksum, and uploads `shift-tracker-signed-apk`. The
+workflow never prints or uploads the keystore.
 
-### Phone-only setup
+### One-time signing-key setup
 
-The APK build does not need the full PWA source. A GitHub repository only needs
-the `android-shell/` directory and `.github/workflows/android-debug-apk.yml`.
-The easiest phone workflow is:
+Run the supplied helper in Termux or another trusted Java 17 environment:
 
-1. Create a private GitHub repository from the GitHub mobile app or website.
-2. Download the Android-shell build kit from this Work conversation and extract
-   it on the phone. It contains the two paths above.
-3. From a phone terminal such as Termux, initialise the extracted folder, add
-   the new GitHub repository as `origin`, commit it and push the `main` branch.
-   GitHub will ask for your username and a fine-grained token with repository
-   Contents write access; create that token in GitHub's browser settings and
-   do not put it in the source or workflow.
-4. Open the repository's **Actions** tab, choose **Android debug APK**, press
-   **Run workflow**, and select `main` if GitHub has not already started the
-   build from the push.
-5. Open the completed run, scroll to **Artifacts**, download the
-   `shift-tracker-debug-apk` ZIP, extract it and install `app-debug.apk` on the
-   Android device. Android may require allowing installs from the browser or
-   file manager used for the download.
+```bash
+cd android-shell
+./scripts/create-release-keystore.sh
+```
+
+`keytool` asks for the passwords without the script putting them on the command
+line. Keep the generated `.jks` in two secure private locations. Losing the
+keystore or its passwords makes future updates to the signed app impossible.
+
+Create these encrypted GitHub Actions repository secrets:
+
+- `SHIFT_TRACKER_KEYSTORE_BASE64` — the complete one-line `.jks.base64` value
+- `SHIFT_TRACKER_KEYSTORE_PASSWORD` — the keystore password
+- `SHIFT_TRACKER_KEY_ALIAS` — `shifttracker`
+- `SHIFT_TRACKER_KEY_PASSWORD` — the key password
+
+Never commit the `.jks`, its Base64 copy or either password. After the secrets
+exist, run **Android signed APK** in GitHub Actions and download the
+`shift-tracker-signed-apk` artifact.
+
+### Safe first migration
+
+1. In the existing APK, generate a current Full Backup and confirm success.
+2. Install the signed APK beside it; do not uninstall the existing APK.
+3. Open the signed app and import the Full Backup after its validation preview.
+4. Compare shifts, payroll, settings and delivery totals in both apps.
+5. Grant the signed app its own Android location/notification permissions.
+6. Complete the Fold GPS test plan before treating it as the operational app.
+7. Keep the old APK until the signed app has passed real-shift verification.
+
+The JSON backup intentionally does not contain separately stored IndexedDB
+photo blobs. Existing photos remain safe in the old APK only while that APK
+stays installed; do not uninstall it if those photos are still required.
 
 Normal hosted-PWA changes still use ChatGPT Work → Publish → Refresh App. A
 new APK is needed only when this native shell, its permissions or its Android

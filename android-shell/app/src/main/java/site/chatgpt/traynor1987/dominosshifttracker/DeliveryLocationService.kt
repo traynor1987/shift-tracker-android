@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -59,7 +60,8 @@ class DeliveryLocationService : Service() {
 
         fun lastSampleReceivedAt() = lastSampleReceivedAt
 
-        fun activeDeliveryId(): String? = instance?.deliveryId
+        fun activeDeliveryId(context: Context? = null): String? = instance?.deliveryId
+            ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.getString(PREF_DELIVERY_ID, null)
 
         fun pipelineDiagnostics(): JSONObject = instance?.pipelineDiagnosticsJson() ?: JSONObject()
             .put("locationUpdateRequest", "not_requested")
@@ -73,6 +75,9 @@ class DeliveryLocationService : Service() {
             .put("lastSampleRejection", JSONObject.NULL)
             .put("recoveryStore", "not_attempted")
             .put("nativeMessageDispatch", "not_attempted")
+            .put("samplingMode", "not_started")
+            .put("lastSampleReceiptAt", JSONObject.NULL)
+            .put("lastRealDistanceMetres", JSONObject.NULL)
 
         fun flushPendingSamples(context: android.content.Context) {
             instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
@@ -104,6 +109,10 @@ class DeliveryLocationService : Service() {
     private var lastSampleRejection: String? = null
     private var recoveryStore = "not_attempted"
     private var nativeMessageDispatch = "not_attempted"
+    private var samplingMode = "not_started"
+    private var sessionStartedAtEpochMs = 0L
+    private var lastSampleReceiptAt: Long? = null
+    private var lastRealDistanceMetres: Float? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -168,6 +177,8 @@ class DeliveryLocationService : Service() {
             return
         }
         deliveryId = requestedDeliveryId
+        sampleStore.retainDelivery(requestedDeliveryId)
+        sessionStartedAtEpochMs = System.currentTimeMillis()
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
         observedSampleIds.clear()
@@ -182,6 +193,9 @@ class DeliveryLocationService : Service() {
         lastSampleRejection = null
         recoveryStore = "not_attempted"
         nativeMessageDispatch = "not_attempted"
+        samplingMode = "near_store"
+        lastSampleReceiptAt = null
+        lastRealDistanceMetres = null
         diagnostic = "SERVICE_NOT_STARTED"
         preferences.edit().putString(PREF_DELIVERY_ID, requestedDeliveryId).apply()
         val foregroundStarted = runCatching { startForegroundCompat() }.isSuccess
@@ -193,21 +207,40 @@ class DeliveryLocationService : Service() {
         running = true
         emitState("service_started", requestedDeliveryId, "Persistent delivery GPS notification posted; requesting precise location")
         val generation = ++requestGeneration
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+        requestContinuousUpdates(generation, requestedDeliveryId, true)
+    }
+
+    private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (nearStore) {
+        // Delivery start and return use time-based fixes so parking immediately
+        // after crossing cannot leave confirmation waiting for another 5m move.
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
+            .setMinUpdateIntervalMillis(1_000L)
+            .setMinUpdateDistanceMeters(0f)
+            .setMaxUpdateDelayMillis(2_000L)
+            .build()
+    } else {
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
             .setMinUpdateIntervalMillis(2_000L)
             .setMinUpdateDistanceMeters(5f)
             .setMaxUpdateDelayMillis(10_000L)
             .build()
+    }
+
+    private fun requestContinuousUpdates(generation: Long, requestedDeliveryId: String, initial: Boolean) {
+        val request = buildLocationRequest(samplingMode == "near_store")
+        locationUpdateRequest = "requesting_$samplingMode"
         runCatching {
             fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnSuccessListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnSuccessListener
-                    locationUpdateRequest = "accepted"
+                    locationUpdateRequest = "accepted_$samplingMode"
                     diagnostic = "WAITING_FOR_FIX"
-                    emitState("waiting_for_fix", deliveryId, "Location-update request accepted; checking provider and requesting the first precise fix")
-                    checkProviderAvailability(generation, requestedDeliveryId)
-                    requestInitialFixes(generation, requestedDeliveryId)
-                    flushPendingSamples()
+                    emitState("waiting_for_fix", deliveryId, "Location-update request accepted in $samplingMode mode")
+                    if (initial) {
+                        checkProviderAvailability(generation, requestedDeliveryId)
+                        requestInitialFixes(generation, requestedDeliveryId)
+                        flushPendingSamples()
+                    }
                 }
                 .addOnFailureListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnFailureListener
@@ -220,6 +253,22 @@ class DeliveryLocationService : Service() {
             locationUpdateRequest = "rejected"
             emitState("service_not_started", deliveryId, "Android location-update request was rejected")
             failTracking()
+        }
+    }
+
+    private fun updateSamplingModeFor(location: Location, id: String) {
+        val distance = NativeTrackingPolicy.distanceMetres(location.latitude, location.longitude, NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE)
+        lastRealDistanceMetres = distance.toFloat()
+        val currentPolicyMode = if (samplingMode == "near_store") NativeTrackingPolicy.SamplingMode.NEAR_STORE else NativeTrackingPolicy.SamplingMode.ROUTE
+        val nextMode = if (NativeTrackingPolicy.samplingMode(location.latitude, location.longitude, currentPolicyMode) == NativeTrackingPolicy.SamplingMode.NEAR_STORE) "near_store" else "route"
+        if (nextMode == samplingMode || !running || deliveryId != id) return
+        samplingMode = nextMode
+        val generation = requestGeneration
+        // Do not race removal of the old request against registration of the
+        // same callback under the new profile; a late removal could otherwise
+        // cancel the replacement and strand a stationary return.
+        fusedLocationClient.removeLocationUpdates(locationCallback).addOnCompleteListener {
+            if (generation == requestGeneration && running && deliveryId == id) requestContinuousUpdates(generation, id, false)
         }
     }
 
@@ -289,10 +338,12 @@ class DeliveryLocationService : Service() {
         lastRawFixTimestamp = location.time.takeIf { it > 0L }
         lastRawFixAccuracy = location.accuracy.takeIf { it.isFinite() }
         lastRawFixProvider = location.provider?.take(64)
+        lastSampleReceiptAt = System.currentTimeMillis()
         // Provider timestamps and accuracy are retained exactly as supplied.
         // Invalid provider values are rejected; no current-time interpolation.
         val rejection = when {
             location.time <= 0L -> "invalid_timestamp"
+            !NativeTrackingPolicy.acceptsProviderTimestamp(sessionStartedAtEpochMs, location.time) -> "fix_predates_delivery_session"
             !location.latitude.isFinite() || location.latitude !in -90.0..90.0 -> "invalid_latitude"
             !location.longitude.isFinite() || location.longitude !in -180.0..180.0 -> "invalid_longitude"
             !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f -> "accuracy_out_of_range"
@@ -302,6 +353,7 @@ class DeliveryLocationService : Service() {
             lastSampleRejection = rejection
             return
         }
+        updateSamplingModeFor(location, id)
         val sample = NativeLocationSample(
             sampleId = "$id:${location.time}",
             deliveryId = id,
@@ -387,6 +439,8 @@ class DeliveryLocationService : Service() {
         diagnostic = "STOPPED"
         emitState("stopped", deliveryId, null)
         deliveryId = null
+        sessionStartedAtEpochMs = 0L
+        samplingMode = "stopped"
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
@@ -401,6 +455,8 @@ class DeliveryLocationService : Service() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         deliveryId = null
+        sessionStartedAtEpochMs = 0L
+        samplingMode = "failed"
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
         stopForegroundCompat()
         stopSelf()
@@ -493,6 +549,7 @@ class DeliveryLocationService : Service() {
         .put("notificationsGranted", hasNotificationPermission())
         .put("locationProviderEnabled", isLocationProviderEnabled())
         .put("serviceRunning", running)
+        .put("trackedDeliveryId", deliveryId ?: JSONObject.NULL)
         .put("lastSampleReceivedAt", lastSampleReceivedAt ?: JSONObject.NULL)
         .put("backgroundPermissionLabel", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) packageManager.getBackgroundPermissionOptionLabel().toString() else "Allow all the time")
         .apply {
@@ -509,6 +566,10 @@ class DeliveryLocationService : Service() {
         .put("lastRawFixTimestamp", lastRawFixTimestamp ?: JSONObject.NULL)
         .put("lastRawFixAccuracy", lastRawFixAccuracy?.toDouble() ?: JSONObject.NULL)
         .put("lastRawFixProvider", lastRawFixProvider ?: JSONObject.NULL)
+        .put("lastSampleReceiptAt", lastSampleReceiptAt ?: JSONObject.NULL)
+        .put("samplingMode", samplingMode)
+        .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
+        .put("recoveryQueueCount", sampleStore.pendingCount())
         .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
         .put("recoveryStore", recoveryStore)
         .put("nativeMessageDispatch", nativeMessageDispatch)

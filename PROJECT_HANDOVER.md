@@ -7,11 +7,48 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version paired with this shell:** **2.1.14** (`lib/nativeBridge.ts` and
-  the About panel in the hosted PWA checkout).
-- **Android shell version:** **2.2.4** (`android-shell/app/build.gradle.kts`),
-  versionCode 9, bridge version 1. The bridge version stays compatible so
+- **Web version paired with this shell:** **2.1.45**.
+- **Android shell version:** **2.2.6** (`android-shell/app/build.gradle.kts`),
+  versionCode 11, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
+
+## Android 2.2.6 — Real-return and native ownership hardening
+
+- Source lineage is verified against GitHub commit `9d75ff9` (Android 2.2.5,
+  versionCode 10). That source matches the installed-version screenshot and
+  contains the expected foreground service, exact-origin bridge, FileProvider,
+  camera/document support and encrypted recovery journal.
+- The hosted PWA remains the sole Real-geofence state machine. Its 2.1.45
+  delivery-owned evidence rules, ordered exit-before-entry requirement,
+  protected 35 m entry and approximately 47 m exit hysteresis are unchanged.
+- Native GPS now switches from the normal 5 s / 5 m / 10 s-max-batch route
+  profile to a 2 s / 0 m / 2 s-max-batch profile within 250 m of the protected
+  Real centre. A 300 m exit threshold prevents sampling-mode churn. This allows
+  a return to confirm after the driver parks without changing the protected
+  centre, radius or Hustle formula.
+- Provider fixes predating the current native delivery session are rejected,
+  persisted native tracking exposes its delivery ID after Activity/process
+  recovery, and the recovery journal retains only samples owned by the current
+  delivery. Diagnostics include tracked ID, sampling mode, provider/receipt
+  times, distance from the protected centre and recovery-queue count.
+- JVM tests cover near-store selection, route mode, approach hysteresis and
+  stale-provider timestamp rejection. GitHub Actions runs those tests before
+  assembling the APK.
+- Previous GitHub debug artifacts were audited and runs 10, 11 and 12 each have
+  a different signing certificate. Therefore no new build can update the
+  installed 2.2.5 APK without its now-unavailable private debug key.
+- The permanent signed app uses application ID
+  `site.chatgpt.traynor1987.dominosshifttracker.stable`. It installs beside the
+  legacy APK for a backup/import and real-device verification period. Every
+  future signed release must retain that ID, signing key and a monotonically
+  increasing versionCode to support normal in-place APK updates.
+- `.github/workflows/android-signed-apk.yml` reads the keystore only from four
+  encrypted GitHub Actions secrets, runs native tests, builds the release,
+  verifies its signature and package ID, and publishes the APK plus SHA-256.
+  The private key is never committed or uploaded as an artifact.
+- `android-shell/scripts/create-release-keystore.sh` creates the one permanent
+  RSA-4096 signing identity locally using interactive `keytool` password input.
+  The user must keep the `.jks` and passwords in at least two secure locations.
 
 ## Architecture
 
@@ -168,14 +205,15 @@ GPS recovery file is temporary and separate from PWA history.
 
 ## Tests and build status
 
-- Hosted PWA `npm test`: rendered-preview verification plus **95 tests passed,
-  0 failed**. The suite includes native bridge and Android build-workflow
-  contracts.
+- Hosted PWA verification on 23 August 2026: production build passed,
+  rendered-preview **1/1**, application tests **228/228**, and lint completed
+  with **0 errors / 28 existing warnings**.
 - `git diff --check`: must remain clean before packaging.
-- The repository contains `.github/workflows/android-debug-apk.yml`.
+- The repository contains `.github/workflows/android-signed-apk.yml`.
 - Workflow: Java 17, Android SDK platform/build-tools 35, Gradle 8.9,
-  `:app:assembleDebug`, artifact `shift-tracker-debug-apk`, retention 14 days,
-  manual `workflow_dispatch` plus Android-file push triggers.
+  `:app:testDebugUnitTest :app:assembleRelease`, signature/package verification,
+  artifact `shift-tracker-signed-apk`, retention 14 days, manual
+  `workflow_dispatch` plus Android-file push triggers.
 - Cloud-build JVM target fix: `android-shell/app/build.gradle.kts` now sets
   Android Java source/target compatibility to Java 17 and Kotlin's typed
   `compilerOptions.jvmTarget` to `JvmTarget.JVM_17`, with a Kotlin JVM
@@ -189,7 +227,9 @@ GPS recovery file is temporary and separate from PWA history.
   `Array<String>`. Exact-origin bridge checks, hosted-PWA loading, runtime
   permissions, native foreground GPS, canonical PWA ingestion, browser-GPS
   suppression, and encrypted recovery storage are unchanged.
-- No release signing, keystore, signing password, or secret is included.
+- No release keystore, signing password or secret is included in source or
+  artifacts. GitHub Actions receives them only through encrypted repository
+  secrets.
 - The first cloud build failed on the JVM target mismatch above, and Cloud
   Build #2 failed on the `MainActivity.kt` issues above. The fixes are applied;
   Cloud Build #3 subsequently succeeded and its debug APK was installed on a
@@ -198,11 +238,9 @@ GPS recovery file is temporary and separate from PWA history.
   encrypted recovery append, native dispatch, PWA receipt, canonical
   acceptance, route-point append and geofence exit. Android 2.2.4 changes only
   post-fix status precedence and rolling last-sample diagnostics.
-- Local `npm test` passes with **95 tests, 0 failed** plus the rendered-preview
-  check. `npm run lint` completes with
-  the repository's existing warnings and no errors. The checkout has no Gradle
-  wrapper or local `gradle` executable, so `:app:assembleDebug` must be verified
-  by the existing Java 17 GitHub Actions workflow.
+- The checkout has no Gradle wrapper or local `gradle` executable, so native
+  JVM tests, compilation and signing must be verified by the Java 17 GitHub
+  Actions workflow after the four signing secrets are configured.
 
 ## Build kit contents
 
@@ -213,30 +251,26 @@ data, GPS history, or build outputs.
 
 ## Exact next step
 
-Publish PWA 2.1.14, run the Android debug workflow for Shell 2.2.4, and install
-the APK over the existing app. Confirm the native install status replaces the
-PWA install prompt, the Shift actions lip opens upward above navigation, and a
-temporary provider-availability change no longer returns an accepted delivery
-to `WAITING FOR GPS`. Do not start Stage 3 or migrate data.
+Create and securely retain the permanent signing keystore, configure the four
+GitHub Actions secrets, push the 2.2.6 repair branch, and run **Android signed
+APK**. Install it beside the legacy APK, import a freshly validated Full Backup,
+and complete the Fold GPS checks below. Do not uninstall the legacy APK while
+its separately stored photo blobs or data may still be required.
 
 ## Device test checklist
 
-1. Open the APK and verify the hosted PWA loads.
-2. Check the current hosted web version 2.1.14 and Android shell 2.2.4 in About.
-3. Start a test Single delivery and confirm the foreground notification.
-4. Read the diagnostic lines: bridge, foreground precision, background setting,
-   FGS state and provider state, then request acceptance, provider availability,
-   current/last fix status, callback count, recovery append, dispatch, PWA
-   receipt, and canonical ingestion. Raw timestamp/accuracy/provider are shown;
-   no coordinates are shown.
-5. Move safely, lock the screen, keep moving, unlock, and press Delivered.
-6. Confirm tracking continues through the return journey.
-7. If desired, choose `Allow all the time` from the in-app Location settings
-   guidance; verify this does not start tracking outside a delivery.
-8. Press Back at Store or cancel; confirm the notification disappears and the
-   diagnostic returns to stopped.
-9. Inspect route evidence, timestamps, accuracy, geofence, mileage, traffic,
-   OSM, customer detection, and duplicate-sample behaviour.
+1. Open the signed app and verify PWA 2.1.45 / Android 2.2.6 in About.
+2. Import the validated backup and compare totals with the still-installed
+   legacy app.
+3. Start Single inside the Real boundary; confirm notification and tracked ID.
+4. Leave beyond the approximately 47 m exit threshold; confirm OUTSIDE and no
+   Back-at-Store Hustle while still away.
+5. Press Delivered, return through 35 m, park immediately and stop moving;
+   confirm entry records promptly and Back at Store produces plausible Hustle.
+6. Repeat with screen locked, app backgrounded, and a WebView reload while out.
+7. Test cancellation and clock-out paths; the notification must disappear.
+8. Install a later signed build with a higher versionCode over this signed app
+   and confirm its imported data remains present.
 
 ## Android shell 2.2.0 — bridge, background permission, photos and files
 
