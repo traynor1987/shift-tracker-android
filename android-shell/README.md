@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.6
+# Shift Tracker Android shell — 2.2.9
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -21,6 +21,9 @@ Current stage:
   canonical ingestion path acknowledges them
 - Delivered deliberately leaves the service running for the return journey;
   Back at Store or Cancel stops it and removes the notification
+- the hosted PWA may replace a bounded rota reminder plan; Android persists
+  only notification metadata, reschedules it after reboot/package update and
+  keeps these alarms completely separate from the delivery GPS service
 - browser `watchPosition` remains the fallback in normal PWA/browser mode and
   is suppressed while the native bridge has an active/requested delivery
 - user-initiated photo capture and file selection use Android's camera/document
@@ -34,6 +37,15 @@ The native shell is still a thin remote WebView. Web publishes remain
 independent: after publishing the hosted PWA, use **Refresh App** in the
 installed shell; an APK rebuild is not required for ordinary web changes.
 
+## Android 2.2.9 GPS watchdog
+
+Android 2.2.9 cumulatively includes the 2.2.7 portrait lock and 2.2.8 native
+rota reminders. While a delivery is active, a native watchdog now detects a
+60-second gap in fused-location samples, reports the stalled state, and
+re-registers the location request for the same delivery ID. Recovery attempts
+are rate-limited to one per minute, preserve the encrypted sample journal, and
+do not create a second delivery or invent route points.
+
 ## Permanent signed APK builds
 
 The release application ID is permanently
@@ -42,6 +54,9 @@ legacy 2.2.5 debug APK, so the old WebView data does not need to be deleted
 before the signed app and imported backup have been verified. Every later
 release must keep this application ID, the same signing key and a larger
 `versionCode`; Android can then update it in place normally.
+
+The launcher activity is fixed to portrait so the native shell behaves like
+the installed PWA and cannot rotate into a landscape layout during a shift.
 
 The repository contains `.github/workflows/android-signed-apk.yml`. It runs the
 native JVM tests, assembles the release, verifies the APK signature and package

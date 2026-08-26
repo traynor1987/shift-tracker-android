@@ -12,11 +12,25 @@ object NativeTrackingPolicy {
     const val REAL_GEOFENCE_LONGITUDE = -2.88802
     const val NEAR_STORE_ENTER_METRES = 250.0
     const val NEAR_STORE_EXIT_METRES = 300.0
+    const val STALL_TIMEOUT_MILLIS = 60_000L
+    const val STALL_RECOVERY_COOLDOWN_MILLIS = 60_000L
 
     enum class SamplingMode { NEAR_STORE, ROUTE }
 
     fun acceptsProviderTimestamp(sessionStartedAtEpochMs: Long, providerTimestampEpochMs: Long): Boolean =
         providerTimestampEpochMs > 0L && providerTimestampEpochMs >= sessionStartedAtEpochMs - 2_000L
+
+    fun shouldRecoverStalledStream(
+        nowEpochMs: Long,
+        sessionStartedAtEpochMs: Long,
+        lastSampleReceiptAtEpochMs: Long?,
+        lastRecoveryAttemptAtEpochMs: Long?,
+    ): Boolean {
+        if (sessionStartedAtEpochMs <= 0L || nowEpochMs < sessionStartedAtEpochMs) return false
+        val newestReceipt = lastSampleReceiptAtEpochMs ?: sessionStartedAtEpochMs
+        if (nowEpochMs - newestReceipt < STALL_TIMEOUT_MILLIS) return false
+        return lastRecoveryAttemptAtEpochMs == null || nowEpochMs - lastRecoveryAttemptAtEpochMs >= STALL_RECOVERY_COOLDOWN_MILLIS
+    }
 
     fun samplingMode(latitude: Double, longitude: Double, currentMode: SamplingMode? = null): SamplingMode {
         val distance = distanceMetres(latitude, longitude, REAL_GEOFENCE_LATITUDE, REAL_GEOFENCE_LONGITUDE)

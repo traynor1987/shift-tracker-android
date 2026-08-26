@@ -37,4 +37,14 @@ class NativeTrackingPolicyTest {
         assertTrue(NativeTrackingPolicy.acceptsProviderTimestamp(started, started - 2_000L))
         assertTrue(NativeTrackingPolicy.acceptsProviderTimestamp(started, started + 1_000L))
     }
+
+    @Test
+    fun stalledStreamRecoversOnlyAfterTimeoutAndCooldown() {
+        val started = 1_777_000_000_000L
+        assertFalse(NativeTrackingPolicy.shouldRecoverStalledStream(started + 59_999L, started, null, null))
+        assertTrue(NativeTrackingPolicy.shouldRecoverStalledStream(started + 60_000L, started, null, null))
+        assertFalse(NativeTrackingPolicy.shouldRecoverStalledStream(started + 100_000L, started, started + 50_000L, null))
+        assertFalse(NativeTrackingPolicy.shouldRecoverStalledStream(started + 119_999L, started, null, started + 60_000L))
+        assertTrue(NativeTrackingPolicy.shouldRecoverStalledStream(started + 120_000L, started, null, started + 60_000L))
+    }
 }

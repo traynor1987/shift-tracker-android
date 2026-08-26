@@ -30,8 +30,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.2.6"
+        versionCode = 14
+        versionName = "2.2.9"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 

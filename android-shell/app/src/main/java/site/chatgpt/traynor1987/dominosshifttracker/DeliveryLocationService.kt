@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -41,6 +42,7 @@ class DeliveryLocationService : Service() {
         private const val NOTIFICATION_ID = 2101
         private const val PREFS_NAME = "native_delivery_tracking"
         private const val PREF_DELIVERY_ID = "delivery_id"
+        private const val WATCHDOG_INTERVAL_MILLIS = 15_000L
 
         @Volatile
         private var running = false
@@ -78,6 +80,8 @@ class DeliveryLocationService : Service() {
             .put("samplingMode", "not_started")
             .put("lastSampleReceiptAt", JSONObject.NULL)
             .put("lastRealDistanceMetres", JSONObject.NULL)
+            .put("watchdogRecoveryCount", 0)
+            .put("lastWatchdogRecoveryAt", JSONObject.NULL)
 
         fun flushPendingSamples(context: android.content.Context) {
             instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
@@ -113,6 +117,15 @@ class DeliveryLocationService : Service() {
     private var sessionStartedAtEpochMs = 0L
     private var lastSampleReceiptAt: Long? = null
     private var lastRealDistanceMetres: Float? = null
+    private val watchdogHandler = Handler(Looper.getMainLooper())
+    private var lastWatchdogRecoveryAt: Long? = null
+    private var watchdogRecoveryCount = 0
+    private val watchdogCheck = object : Runnable {
+        override fun run() {
+            checkForStalledStream()
+            if (running) watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MILLIS)
+        }
+    }
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -196,6 +209,8 @@ class DeliveryLocationService : Service() {
         samplingMode = "near_store"
         lastSampleReceiptAt = null
         lastRealDistanceMetres = null
+        lastWatchdogRecoveryAt = null
+        watchdogRecoveryCount = 0
         diagnostic = "SERVICE_NOT_STARTED"
         preferences.edit().putString(PREF_DELIVERY_ID, requestedDeliveryId).apply()
         val foregroundStarted = runCatching { startForegroundCompat() }.isSuccess
@@ -208,6 +223,30 @@ class DeliveryLocationService : Service() {
         emitState("service_started", requestedDeliveryId, "Persistent delivery GPS notification posted; requesting precise location")
         val generation = ++requestGeneration
         requestContinuousUpdates(generation, requestedDeliveryId, true)
+        watchdogHandler.removeCallbacks(watchdogCheck)
+        watchdogHandler.postDelayed(watchdogCheck, WATCHDOG_INTERVAL_MILLIS)
+    }
+
+    private fun checkForStalledStream() {
+        val id = deliveryId ?: return
+        if (!running) return
+        val now = System.currentTimeMillis()
+        if (!NativeTrackingPolicy.shouldRecoverStalledStream(now, sessionStartedAtEpochMs, lastSampleReceiptAt, lastWatchdogRecoveryAt)) return
+        lastWatchdogRecoveryAt = now
+        watchdogRecoveryCount += 1
+        diagnostic = "GPS_STALLED_RECOVERING"
+        locationUpdateRequest = "watchdog_restarting"
+        // Use the established bridge status vocabulary so older hosted builds
+        // can display recovery immediately; the diagnostics retain the exact
+        // watchdog reason and recovery count.
+        emitState("waiting_for_fix", id, "GPS stalled: no native sample arrived for 60 seconds; restarting the same delivery location stream")
+        val generation = ++requestGeneration
+        initialFixCancellation?.cancel()
+        initialFixCancellation = null
+        fusedLocationClient.removeLocationUpdates(locationCallback).addOnCompleteListener {
+            if (generation != requestGeneration || !running || deliveryId != id) return@addOnCompleteListener
+            requestContinuousUpdates(generation, id, true)
+        }
     }
 
     private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (nearStore) {
@@ -432,6 +471,7 @@ class DeliveryLocationService : Service() {
 
     private fun stopTracking() {
         requestGeneration += 1
+        watchdogHandler.removeCallbacks(watchdogCheck)
         initialFixCancellation?.cancel()
         initialFixCancellation = null
         fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -450,6 +490,7 @@ class DeliveryLocationService : Service() {
 
     private fun failTracking() {
         requestGeneration += 1
+        watchdogHandler.removeCallbacks(watchdogCheck)
         initialFixCancellation?.cancel()
         initialFixCancellation = null
         fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -464,6 +505,7 @@ class DeliveryLocationService : Service() {
 
     override fun onDestroy() {
         initialFixCancellation?.cancel()
+        watchdogHandler.removeCallbacks(watchdogCheck)
         fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         if (instance === this) instance = null
@@ -569,6 +611,8 @@ class DeliveryLocationService : Service() {
         .put("lastSampleReceiptAt", lastSampleReceiptAt ?: JSONObject.NULL)
         .put("samplingMode", samplingMode)
         .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
+        .put("watchdogRecoveryCount", watchdogRecoveryCount)
+        .put("lastWatchdogRecoveryAt", lastWatchdogRecoveryAt ?: JSONObject.NULL)
         .put("recoveryQueueCount", sampleStore.pendingCount())
         .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
         .put("recoveryStore", recoveryStore)

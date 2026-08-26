@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         private const val LOCATION_PERMISSION_REQUEST = 2102
         private const val NOTIFICATION_PERMISSION_REQUEST = 2103
         private const val BACKGROUND_LOCATION_PERMISSION_REQUEST = 2104
+        private const val ROTA_NOTIFICATION_PERMISSION_REQUEST = 2105
         private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
 
         @Volatile
@@ -232,6 +233,13 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
             "shift_tracker_file:save" -> requestNativeFileSave(message)
+            "shift_tracker_rota:sync" -> {
+                val count = RotaReminderScheduler.replace(this, message.optJSONArray("reminders") ?: org.json.JSONArray())
+                postNativeMessage(JSONObject().put("type", "shift_tracker_rota:sync_result").put("scheduled", count).toString())
+            }
+            "shift_tracker_rota:request_permission" -> {
+                if (Build.VERSION.SDK_INT >= 33 && !hasNotificationPermission()) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), ROTA_NOTIFICATION_PERMISSION_REQUEST)
+            }
             "shift_tracker_location:ack" -> {
                 val sampleId = message.optString("sampleId").trim()
                 if (sampleId.isNotEmpty() && sampleId.length <= 256) DeliveryLocationService.acknowledgePendingSample(this, sampleId)
@@ -525,6 +533,10 @@ class MainActivity : ComponentActivity() {
                     sendNativeState("background_permission_required", deliveryId, "Background location remains off; enable ${backgroundPermissionLabel()} from App permissions → Location if required")
                     sendShellReady()
                 }
+            }
+            ROTA_NOTIFICATION_PERMISSION_REQUEST -> {
+                postNativeMessage(JSONObject().put("type", "shift_tracker_rota:permission").put("granted", hasNotificationPermission()).toString())
+                if (hasNotificationPermission()) RotaReminderScheduler.scheduleStored(this)
             }
         }
     }
