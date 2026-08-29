@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
         private const val NOTIFICATION_PERMISSION_REQUEST = 2103
         private const val BACKGROUND_LOCATION_PERMISSION_REQUEST = 2104
         private const val ROTA_NOTIFICATION_PERMISSION_REQUEST = 2105
+        private const val WORK_NOTIFICATION_PERMISSION_REQUEST = 2106
         private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
 
         @Volatile
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private var cameraCaptureUri: Uri? = null
     private var cameraCaptureFile: File? = null
     private var pendingFileSave: PendingFileSave? = null
+    private var pendingWorkNotification: String? = null
 
     private data class PendingFileSave(
         val requestId: String,
@@ -75,8 +77,7 @@ class MainActivity : ComponentActivity() {
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val callback = fileChooserCallback ?: return@registerForActivityResult
         val selected = if (result.resultCode == Activity.RESULT_OK) {
-            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
-                ?: cameraCaptureUri?.let { arrayOf(it) }
+            selectedUris(result.data).ifEmpty { cameraCaptureUri?.let(::listOf) ?: emptyList() }.toTypedArray().takeIf { it.isNotEmpty() }
         } else null
         callback.onReceiveValue(selected)
         fileChooserCallback = null
@@ -240,6 +241,16 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_rota:request_permission" -> {
                 if (Build.VERSION.SDK_INT >= 33 && !hasNotificationPermission()) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), ROTA_NOTIFICATION_PERMISSION_REQUEST)
             }
+            "shift_tracker_work:set" -> requestNativeWorkNotification(message)
+            "shift_tracker_work:clear" -> {
+                pendingWorkNotification = null
+                TrackerNotifications.clearWork(this)
+            }
+            "shift_tracker_geofence:alert" -> {
+                val direction = message.optString("direction")
+                val observedAt = message.optLong("observedAtEpochMs", 0L)
+                if ((direction == "left" || direction == "returned") && observedAt > 0L) TrackerNotifications.showGeofence(this, direction == "returned", observedAt)
+            }
             "shift_tracker_location:ack" -> {
                 val sampleId = message.optString("sampleId").trim()
                 if (sampleId.isNotEmpty() && sampleId.length <= 256) DeliveryLocationService.acknowledgePendingSample(this, sampleId)
@@ -258,6 +269,38 @@ class MainActivity : ComponentActivity() {
             put("diagnostics", nativeDiagnostics())
         }.toString()
         postNativeMessage(payload)
+    }
+
+    private fun requestNativeWorkNotification(message: JSONObject) {
+        val kind = message.optString("kind")
+        val taskId = message.optString("taskId").trim()
+        val taskName = message.optString("taskName").trim()
+        if ((kind != "cleaning" && kind != "prep") || taskId.isEmpty() || taskId.length > 128 || taskName.isEmpty() || taskName.length > 160) return
+        pendingWorkNotification = message.toString()
+        if (!hasNotificationPermission()) {
+            if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), WORK_NOTIFICATION_PERMISSION_REQUEST)
+            return
+        }
+        showPendingWorkNotification()
+    }
+
+    private fun showPendingWorkNotification() {
+        val message = pendingWorkNotification?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        pendingWorkNotification = null
+        val startedAt = message.optLong("startedAtEpochMs", 0L).takeIf { it > 0L }
+        TrackerNotifications.showWork(this, message.optString("kind"), message.optString("taskName"), startedAt, message.optBoolean("paused", false))
+    }
+
+    private fun selectedUris(data: Intent?): List<Uri> {
+        val selected = LinkedHashSet<Uri>()
+        data?.clipData?.let { clip ->
+            for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(selected::add)
+        }
+        data?.data?.let(selected::add)
+        selected.forEach { uri ->
+            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        return selected.toList()
     }
 
     private fun postNativeMessage(payload: String): Boolean {
@@ -538,6 +581,9 @@ class MainActivity : ComponentActivity() {
                 postNativeMessage(JSONObject().put("type", "shift_tracker_rota:permission").put("granted", hasNotificationPermission()).toString())
                 if (hasNotificationPermission()) RotaReminderScheduler.scheduleStored(this)
             }
+            WORK_NOTIFICATION_PERMISSION_REQUEST -> {
+                if (hasNotificationPermission()) showPendingWorkNotification() else pendingWorkNotification = null
+            }
         }
     }
 
@@ -585,6 +631,7 @@ class MainActivity : ComponentActivity() {
             val imageRequest = acceptTypes.isEmpty() || acceptTypes.any { it == "image/*" || it.startsWith("image/") }
             val openIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                 type = when {
                     acceptTypes.isEmpty() -> "*/*"
                     acceptTypes.size == 1 -> acceptTypes.first()

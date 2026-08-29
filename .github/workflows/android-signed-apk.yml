@@ -64,6 +64,9 @@ jobs:
           SHIFT_TRACKER_KEY_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEY_PASSWORD }}
         run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :app:assembleRelease
 
+      - name: Verify portrait activity lock
+        run: grep -F 'android:screenOrientation="portrait"' app/src/main/AndroidManifest.xml
+
       - name: Verify APK signature and package
         run: |
           set -euo pipefail

@@ -1,0 +1,15 @@
+# Android/Gradle build output
+.gradle/
+**/build/
+local.properties
+
+# Permanent APK signing material must never enter source control
+*.jks
+*.keystore
+*.jks.base64
+*.keystore.base64
+
+# Local editor/OS files
+.idea/
+*.iml
+.DS_Store

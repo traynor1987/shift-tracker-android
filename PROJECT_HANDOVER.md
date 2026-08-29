@@ -7,10 +7,32 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version paired with this shell:** **2.1.45**.
-- **Android shell version:** **2.2.6** (`android-shell/app/build.gradle.kts`),
-  versionCode 11, bridge version 1. The bridge version stays compatible so
+- **Web version paired with this shell:** **2.1.82**.
+- **Android shell version:** **2.2.10** (`android-shell/app/build.gradle.kts`),
+  versionCode 15, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
+
+## Android 2.2.10 — task notifications, geofence alerts and multi-photo repair
+
+- Active cleaning/preparation tasks post a low-priority ongoing notification
+  with the task name and Android chronometer. Paused tasks show a paused state;
+  completing, cancelling or clocking out clears the notification.
+- Confirmed Real-geofence exit and return transitions post short Android alerts.
+  The hosted PWA remains the only canonical geofence state machine.
+- Work and geofence notifications are normal notifications only. They never
+  start the delivery foreground service and never collect location.
+- Android multi-select now enumerates `ClipData` and retains every selected
+  document read grant instead of relying on the generic WebView parser.
+- Release identity is unchanged; versionCode 15 supports an in-place update
+  over signed 2.2.9 when built with the same permanent signing key.
+
+## Android 2.2.7 — Portrait orientation lock
+
+- The native launcher activity is locked to portrait in the Android manifest,
+  matching the installed PWA and preventing accidental landscape rotation.
+- No hosted PWA, GPS, geofence, delivery, storage or bridge behaviour changed.
+- The permanent release identity and signing workflow remain unchanged, and
+  versionCode 12 supports an in-place update over the signed 2.2.6 app.
 
 ## Android 2.2.6 — Real-return and native ownership hardening
 

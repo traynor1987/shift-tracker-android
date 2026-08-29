@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.9
+# Shift Tracker Android shell — 2.2.10
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -32,6 +32,20 @@ Current stage:
 - privacy-sanitised JSON backups and CSV exports use Android's create-document
   picker; imports use the existing PWA validation and explicit restore step
 - the launcher uses the same Shift Tracker icon as the hosted PWA
+
+## Android 2.2.10 notifications and photo picker
+
+Android 2.2.10 adds exact-origin bridge commands for normal notification-bar
+status without changing the delivery foreground-service lifecycle. Active
+cleaning and preparation tasks show the task name and Android chronometer;
+paused tasks show a paused state, and completion/cancellation clears it.
+Confirmed canonical Real-geofence exits and returns create short, silent native
+alerts. These notifications never start location collection.
+
+The document picker now explicitly reads every URI from Android `ClipData`,
+preserves selection order, removes duplicates and retains the read grant for
+each selected document. This replaces the generic WebView result parser that
+could return only one item or an unreadable handle for a multi-photo choice.
 
 The native shell is still a thin remote WebView. Web publishes remain
 independent: after publishing the hosted PWA, use **Refresh App** in the
