@@ -7,16 +7,9 @@
     android:minHeight="92dp"
     android:orientation="horizontal"
     android:padding="12dp">
-    <ImageView
-        android:id="@+id/geofence_alert_icon"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:contentDescription="Shift Tracker"
-        android:src="@mipmap/shift_tracker_launcher" />
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
         android:layout_weight="1"
         android:orientation="vertical">
         <TextView

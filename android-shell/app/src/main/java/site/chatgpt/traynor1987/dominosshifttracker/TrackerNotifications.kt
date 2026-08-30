@@ -149,7 +149,6 @@ object TrackerNotifications {
         val title = if (returned) "BACK IN THE STORE ZONE" else "LEFT THE STORE ZONE"
         val text = if (returned) "Real geofence confirmed · you are back inside." else "Real geofence confirmed · delivery trip is now outside."
         val alertView = RemoteViews(context.packageName, R.layout.notification_geofence_alert).apply {
-            setImageViewResource(R.id.geofence_alert_icon, R.mipmap.shift_tracker_launcher)
             setTextViewText(R.id.geofence_alert_title, title)
             setTextViewText(R.id.geofence_alert_detail, if (returned) "RETURNED TO STORE" else "OUT FOR DELIVERY")
             setTextViewText(R.id.geofence_alert_message, text)

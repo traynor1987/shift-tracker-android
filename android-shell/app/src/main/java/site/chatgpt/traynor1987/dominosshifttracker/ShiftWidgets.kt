@@ -51,6 +51,13 @@ private fun actionLabel(action: String): String = when (action) {
     else -> "OPEN"
 }
 
+private fun actionBackground(snapshot: ShiftSnapshot?, action: String): Int = when (action) {
+    "single" -> R.drawable.widget_red_button
+    "delivered" -> if (snapshot?.activity == "delivery_single") R.drawable.widget_red_button else R.drawable.widget_blue_button
+    "back_at_store", "end_break", "complete_task" -> R.drawable.widget_green_button
+    else -> R.drawable.widget_blue_button
+}
+
 private fun bindDynamicAction(view: RemoteViews, context: Context, snapshot: ShiftSnapshot?, viewId: Int, action: String?, requestCode: Int) {
     if (action == null) {
         view.setViewVisibility(viewId, android.view.View.GONE)
@@ -58,6 +65,7 @@ private fun bindDynamicAction(view: RemoteViews, context: Context, snapshot: Shi
     }
     view.setViewVisibility(viewId, android.view.View.VISIBLE)
     view.setTextViewText(viewId, actionLabel(action))
+    view.setInt(viewId, "setBackgroundResource", actionBackground(snapshot, action))
     view.setOnClickPendingIntent(viewId, if (action == "open") NativeShiftState.openAppPendingIntent(context, requestCode) else NativeShiftState.actionPendingIntent(context, action, requestCode))
 }
 
@@ -108,18 +116,15 @@ class MediumShiftWidget : AppWidgetProvider() {
                 view.setTextViewText(R.id.widget_pay, snapshot?.estimatedPay?.ifBlank { "Pay calculating" } ?: "Clock in to begin")
                 view.bindChronometer(snapshot, R.id.widget_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.widget_root, NativeShiftState.openAppPendingIntent(context, 3400 + id))
-                bindAction(view, context, snapshot, R.id.widget_single, "single", 3500 + id)
-                bindAction(view, context, snapshot, R.id.widget_double, "double", 3600 + id)
-                bindAction(view, context, snapshot, R.id.widget_break, "break", 3700 + id)
-                view.setOnClickPendingIntent(R.id.widget_open, NativeShiftState.openAppPendingIntent(context, 3800 + id))
+                val actions = snapshot?.takeIf { it.shiftActive && !it.isStale }?.let { state ->
+                    widgetActionOrder.filter { action -> action in state.allowedActions }.take(3)
+                } ?: emptyList()
+                bindDynamicAction(view, context, snapshot, R.id.widget_single, actions.getOrNull(0), 3500 + id)
+                bindDynamicAction(view, context, snapshot, R.id.widget_double, actions.getOrNull(1), 3600 + id)
+                bindDynamicAction(view, context, snapshot, R.id.widget_break, actions.getOrNull(2), 3700 + id)
+                bindDynamicAction(view, context, snapshot, R.id.widget_open, "open", 3800 + id)
                 manager.updateAppWidget(id, view)
             }
-        }
-
-        private fun bindAction(view: RemoteViews, context: Context, snapshot: ShiftSnapshot?, viewId: Int, action: String, requestCode: Int) {
-            val enabled = snapshot?.shiftActive == true && !snapshot.isStale && action in snapshot.allowedActions
-            view.setViewVisibility(viewId, if (enabled) android.view.View.VISIBLE else android.view.View.GONE)
-            if (enabled) view.setOnClickPendingIntent(viewId, NativeShiftState.actionPendingIntent(context, action, requestCode))
         }
     }
 }
@@ -137,13 +142,13 @@ class LargeShiftWidget : AppWidgetProvider() {
                 view.setTextViewText(R.id.large_pay, snapshot?.estimatedPay?.ifBlank { "Pay calculating" } ?: "Clock in to begin")
                 view.bindChronometer(snapshot, R.id.large_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.large_root, NativeShiftState.openAppPendingIntent(context, 4300 + id))
-                val actions = (snapshot?.takeIf { it.shiftActive && !it.isStale }?.let { state ->
+                val actions = snapshot?.takeIf { it.shiftActive && !it.isStale }?.let { state ->
                     widgetActionOrder.filter { action -> action in state.allowedActions }.take(3)
-                } ?: emptyList()) + "open"
+                } ?: emptyList()
                 bindDynamicAction(view, context, snapshot, R.id.large_action_one, actions.getOrNull(0), 4400 + id)
                 bindDynamicAction(view, context, snapshot, R.id.large_action_two, actions.getOrNull(1), 4500 + id)
                 bindDynamicAction(view, context, snapshot, R.id.large_action_three, actions.getOrNull(2), 4600 + id)
-                bindDynamicAction(view, context, snapshot, R.id.large_open, actions.getOrNull(3), 4700 + id)
+                bindDynamicAction(view, context, snapshot, R.id.large_open, "open", 4700 + id)
                 manager.updateAppWidget(id, view)
             }
         }
