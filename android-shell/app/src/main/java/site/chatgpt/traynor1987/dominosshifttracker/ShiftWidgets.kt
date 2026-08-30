@@ -30,6 +30,14 @@ private fun RemoteViews.bindChronometer(snapshot: ShiftSnapshot?, viewId: Int, s
     } else setViewVisibility(viewId, android.view.View.GONE)
 }
 
+/** A widget's main timer always belongs to the currently active activity.
+ * Idle is the only state that should show the full shift duration. */
+private fun timerStartedAt(snapshot: ShiftSnapshot?): Long = when {
+    snapshot?.shiftActive != true -> 0L
+    snapshot.activity == "idle" -> snapshot.shiftStartedAt
+    else -> snapshot.activityStartedAt
+}
+
 private val widgetActionOrder = listOf("delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break")
 
 private fun actionLabel(action: String): String = when (action) {
@@ -62,7 +70,7 @@ class CompactShiftWidget : AppWidgetProvider() {
                 val view = RemoteViews(context.packageName, R.layout.widget_shift_compact)
                 view.setTextViewText(R.id.compact_status, activityTitle(snapshot))
                 view.setTextViewText(R.id.compact_detail, activityDetail(snapshot))
-                view.bindChronometer(snapshot, R.id.compact_timer, if (snapshot?.activity != "idle") snapshot?.activityStartedAt ?: 0L else snapshot?.shiftStartedAt ?: 0L)
+                view.bindChronometer(snapshot, R.id.compact_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.compact_root, NativeShiftState.openAppPendingIntent(context, 3200 + id))
                 manager.updateAppWidget(id, view)
             }
@@ -79,7 +87,7 @@ class SmallShiftWidget : AppWidgetProvider() {
                 val view = RemoteViews(context.packageName, R.layout.widget_shift_small)
                 view.setTextViewText(R.id.widget_status, activityTitle(snapshot))
                 view.setTextViewText(R.id.widget_detail, activityDetail(snapshot))
-                view.bindChronometer(snapshot, R.id.widget_timer, if (snapshot?.activity != "idle") snapshot?.activityStartedAt ?: 0L else snapshot?.shiftStartedAt ?: 0L)
+                view.bindChronometer(snapshot, R.id.widget_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.widget_root, NativeShiftState.openAppPendingIntent(context, 3300 + id))
                 manager.updateAppWidget(id, view)
             }
@@ -98,7 +106,7 @@ class MediumShiftWidget : AppWidgetProvider() {
                 view.setTextViewText(R.id.widget_detail, activityDetail(snapshot))
                 view.setTextViewText(R.id.widget_deliveries, "${snapshot?.deliveries ?: 0} deliveries")
                 view.setTextViewText(R.id.widget_pay, snapshot?.estimatedPay?.ifBlank { "Pay calculating" } ?: "Clock in to begin")
-                view.bindChronometer(snapshot, R.id.widget_timer, snapshot?.shiftStartedAt ?: 0L)
+                view.bindChronometer(snapshot, R.id.widget_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.widget_root, NativeShiftState.openAppPendingIntent(context, 3400 + id))
                 bindAction(view, context, snapshot, R.id.widget_single, "single", 3500 + id)
                 bindAction(view, context, snapshot, R.id.widget_double, "double", 3600 + id)
@@ -127,7 +135,7 @@ class LargeShiftWidget : AppWidgetProvider() {
                 view.setTextViewText(R.id.large_detail, activityDetail(snapshot))
                 view.setTextViewText(R.id.large_deliveries, "${snapshot?.deliveries ?: 0} deliveries")
                 view.setTextViewText(R.id.large_pay, snapshot?.estimatedPay?.ifBlank { "Pay calculating" } ?: "Clock in to begin")
-                view.bindChronometer(snapshot, R.id.large_timer, snapshot?.shiftStartedAt ?: 0L)
+                view.bindChronometer(snapshot, R.id.large_timer, timerStartedAt(snapshot))
                 view.setOnClickPendingIntent(R.id.large_root, NativeShiftState.openAppPendingIntent(context, 4300 + id))
                 val actions = (snapshot?.takeIf { it.shiftActive && !it.isStale }?.let { state ->
                     widgetActionOrder.filter { action -> action in state.allowedActions }.take(3)

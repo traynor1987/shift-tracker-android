@@ -4,10 +4,13 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -17,7 +20,9 @@ object TrackerNotifications {
     private const val WORK_CHANNEL = "shift_tracker_work_status"
     private const val LIVE_SHIFT_CHANNEL = "shift_tracker_live_shift_v1"
     private const val REMINDER_CHANNEL = "shift_tracker_reminders_v1"
-    private const val GEOFENCE_CHANNEL = "shift_tracker_geofence_events"
+    // New channel ID deliberately replaces the old silent channel. Android
+    // preserves a channel's user-visible alert policy after first creation.
+    private const val GEOFENCE_CHANNEL = "shift_tracker_geofence_events_v2"
     private const val WORK_NOTIFICATION_ID = 2210
     private const val GEOFENCE_NOTIFICATION_ID = 2211
     private const val LIVE_SHIFT_NOTIFICATION_ID = 2212
@@ -43,10 +48,11 @@ object TrackerNotifications {
                 setSound(null, null)
                 enableVibration(false)
             },
-            NotificationChannel(GEOFENCE_CHANNEL, "Store geofence", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel(GEOFENCE_CHANNEL, "Store geofence alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Confirmed departures from and returns to the protected store geofence"
-                setSound(null, null)
-                enableVibration(false)
+                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build())
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 160, 90, 260)
             },
             NotificationChannel(LIVE_SHIFT_CHANNEL, "Live shift", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Current Shift Tracker status and timer"
@@ -140,22 +146,34 @@ object TrackerNotifications {
     fun showGeofence(context: Context, returned: Boolean, observedAtEpochMs: Long) {
         if (!notificationsAllowed(context)) return
         ensureChannels(context)
-        val title = if (returned) "Returned to store geofence" else "Left store geofence"
-        val text = if (returned) "You are back inside the protected Real delivery zone." else "You are now outside the protected Real delivery zone."
+        val title = if (returned) "BACK IN THE STORE ZONE" else "LEFT THE STORE ZONE"
+        val text = if (returned) "Real geofence confirmed · you are back inside." else "Real geofence confirmed · delivery trip is now outside."
+        val alertView = RemoteViews(context.packageName, R.layout.notification_geofence_alert).apply {
+            setImageViewResource(R.id.geofence_alert_icon, R.mipmap.shift_tracker_launcher)
+            setTextViewText(R.id.geofence_alert_title, title)
+            setTextViewText(R.id.geofence_alert_detail, if (returned) "RETURNED TO STORE" else "OUT FOR DELIVERY")
+            setTextViewText(R.id.geofence_alert_message, text)
+            setTextViewText(R.id.geofence_alert_badge, if (returned) "RETURN" else "EXIT")
+        }
         manager(context).notify(GEOFENCE_NOTIFICATION_ID, NotificationCompat.Builder(context, GEOFENCE_CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_dialog_map)
+            .setSmallIcon(R.drawable.ic_stat_shift_tracker)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCustomContentView(alertView)
+            .setCustomBigContentView(alertView)
+            .setCustomHeadsUpContentView(alertView)
             .setContentIntent(openAppIntent(context))
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setColor(ContextCompat.getColor(context, R.color.widget_blue))
+            .setColorized(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
+            .setVibrate(longArrayOf(0, 160, 90, 260))
             .setWhen(observedAtEpochMs)
             .setShowWhen(true)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setTimeoutAfter(30_000L)
+            .setOnlyAlertOnce(false)
+            .setTimeoutAfter(45_000L)
             .build())
     }
 }

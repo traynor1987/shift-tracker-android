@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/widget_background"
+    android:gravity="center_vertical"
+    android:minHeight="92dp"
+    android:orientation="horizontal"
+    android:padding="12dp">
+    <ImageView
+        android:id="@+id/geofence_alert_icon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:contentDescription="Shift Tracker"
+        android:src="@mipmap/shift_tracker_launcher" />
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+        <TextView
+            android:id="@+id/geofence_alert_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/widget_blue"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/geofence_alert_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/widget_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/geofence_alert_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:maxLines="2"
+            android:textColor="@color/widget_secondary"
+            android:textSize="11sp" />
+    </LinearLayout>
+    <TextView
+        android:id="@+id/geofence_alert_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/widget_red_pill"
+        android:paddingHorizontal="9dp"
+        android:paddingVertical="5dp"
+        android:textColor="#FFFFFFFF"
+        android:textSize="9sp"
+        android:textStyle="bold" />
+</LinearLayout>
