@@ -10,7 +10,10 @@
             </intent-filter>
         </activity>
         <service android:name=".WearStateListenerService" android:exported="true">
-            <intent-filter><action android:name="com.google.android.gms.wearable.BIND_LISTENER" /></intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:path="/shift-tracker/state" />
+            </intent-filter>
         </service>
         <service android:name=".ShiftTrackerWearTileService" android:exported="true" android:label="Shift Tracker" android:permission="android.permission.BIND_TILE_PROVIDER">
             <intent-filter><action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" /></intent-filter>
