@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Location
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -26,6 +27,8 @@ import androidx.core.view.WindowCompat
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -256,6 +259,7 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
+            "shift_tracker_store_proof:request" -> requestStoreProofLocation(message.optString("requestId"))
             "shift_tracker_file:save" -> requestNativeFileSave(message)
             "shift_tracker_file:share" -> requestNativeShare(message)
             "shift_tracker_state:sync" -> {
@@ -352,6 +356,51 @@ class MainActivity : ComponentActivity() {
             trustedReplyProxy?.postMessage(payload)
                 ?: WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
         }.isSuccess
+    }
+
+    /**
+     * One user-triggered foreground reading for the optional store-start proof.
+     * It is intentionally not connected to DeliveryLocationService, geofence
+     * evaluation, persisted samples, or any delivery start/return behaviour.
+     */
+    private fun requestStoreProofLocation(rawRequestId: String?) {
+        val requestId = rawRequestId?.trim()
+        if (requestId.isNullOrEmpty() || requestId.length > 128) return
+        if (!hasPreciseLocationPermission()) {
+            sendStoreProofLocationResult(requestId, "permission_required", null, "Allow Precise location for Shift Tracker, then try again")
+            return
+        }
+        if (!isLocationProviderEnabled()) {
+            sendStoreProofLocationResult(requestId, "unavailable", null, "Turn on phone location, then try again")
+            return
+        }
+        LocationServices.getFusedLocationProviderClient(this)
+            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                val valid = location != null && location.latitude.isFinite() && location.longitude.isFinite() && location.accuracy.isFinite() && location.accuracy >= 0f && location.time > 0L
+                if (valid) sendStoreProofLocationResult(requestId, "ok", location, null)
+                else sendStoreProofLocationResult(requestId, "unavailable", null, "Android could not obtain a current GPS fix")
+            }
+            .addOnFailureListener {
+                sendStoreProofLocationResult(requestId, "unavailable", null, "Android could not obtain a current GPS fix")
+            }
+    }
+
+    private fun sendStoreProofLocationResult(requestId: String, status: String, location: Location?, message: String?) {
+        postNativeMessage(JSONObject()
+            .put("type", "shift_tracker_store_proof:result")
+            .put("requestId", requestId)
+            .put("status", status)
+            .apply {
+                if (location != null) {
+                    put("latitude", location.latitude)
+                    put("longitude", location.longitude)
+                    put("accuracy", location.accuracy.toDouble())
+                    put("timestampEpochMs", location.time)
+                }
+                if (!message.isNullOrBlank()) put("message", message)
+            }
+            .toString())
     }
 
     private fun requestNativeLocationStart(rawDeliveryId: String?) {
