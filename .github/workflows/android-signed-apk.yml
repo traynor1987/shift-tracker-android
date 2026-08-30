@@ -83,7 +83,7 @@ jobs:
           APK="wear/build/outputs/apk/release/wear-release.apk"
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
-          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable' versionCode='21' versionName='2.2.16'"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable' versionCode='22' versionName='2.2.17'"
           sha256sum "$APK" > "$APK.sha256"
           cat "$APK.sha256"
 

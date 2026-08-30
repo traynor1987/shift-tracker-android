@@ -14,7 +14,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
     override fun onCreate(b:Bundle?){super.onCreate(b); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); build(); request(); render()}
     override fun onResume(){super.onResume();Wearable.getDataClient(this).addListener(this);request();render()}
     override fun onPause(){Wearable.getDataClient(this).removeListener(this);handler.removeCallbacksAndMessages(null);super.onPause()}
-    override fun onDataChanged(es:DataEventBuffer){es.use{it.forEach{e->if(e.dataItem.uri.path==WearState.STATE_PATH)runOnUiThread{render()}}}}
+    override fun onDataChanged(es:DataEventBuffer){es.use{it.forEach{e->if(e.dataItem.uri.path==WearState.STATE_PATH){if(e.type==DataEvent.TYPE_DELETED)WearState.clear(this);runOnUiThread{render()}}}}}
     private fun build(){val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK);keepScreenOn=true};dial=WearDialView(this);root.addView(dial,FrameLayout.LayoutParams(-1,-1));val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(34,26,34,30)}
         fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false}
         panel.addView(ImageView(this).apply{setImageResource(site.chatgpt.traynor1987.dominosshifttracker.wear.R.drawable.ic_shift_tracker);contentDescription="Shift Tracker"},LinearLayout.LayoutParams(23,23).apply{bottomMargin=2})
