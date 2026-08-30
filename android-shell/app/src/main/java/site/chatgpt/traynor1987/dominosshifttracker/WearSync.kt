@@ -19,18 +19,19 @@ object WearSync {
     const val RESULT_PATH = "/shift-tracker/action-result"
     private const val KEY_JSON = "snapshot"
 
-    fun publish(context: Context, snapshot: ShiftSnapshot = NativeShiftState.read(context) ?: return) {
+    fun publish(context: Context, snapshot: ShiftSnapshot? = null) {
+        val current = snapshot ?: NativeShiftState.read(context) ?: return
         val raw = JSONObject()
-            .put("shiftActive", snapshot.shiftActive)
-            .put("shiftStartedAtEpochMs", snapshot.shiftStartedAt)
-            .put("activity", snapshot.activity)
-            .put("activityName", snapshot.activityName)
-            .put("activityStartedAtEpochMs", snapshot.activityStartedAt)
-            .put("deliveries", snapshot.deliveries)
-            .put("estimatedPay", snapshot.estimatedPay)
-            .put("storeStatus", snapshot.storeStatus)
-            .put("allowedActions", snapshot.allowedActions.joinToString(","))
-            .put("updatedAtEpochMs", snapshot.updatedAt)
+            .put("shiftActive", current.shiftActive)
+            .put("shiftStartedAtEpochMs", current.shiftStartedAt)
+            .put("activity", current.activity)
+            .put("activityName", current.activityName)
+            .put("activityStartedAtEpochMs", current.activityStartedAt)
+            .put("deliveries", current.deliveries)
+            .put("estimatedPay", current.estimatedPay)
+            .put("storeStatus", current.storeStatus)
+            .put("allowedActions", current.allowedActions.joinToString(","))
+            .put("updatedAtEpochMs", current.updatedAt)
             .toString()
         val request = PutDataMapRequest.create(STATE_PATH).apply {
             dataMap.putString(KEY_JSON, raw)
