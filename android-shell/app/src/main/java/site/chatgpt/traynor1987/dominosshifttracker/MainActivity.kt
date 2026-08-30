@@ -18,15 +18,18 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 /**
  * Remote, origin-locked WebView shell. The PWA remains the source of truth;
@@ -46,7 +49,9 @@ class MainActivity : ComponentActivity() {
         private const val BACKGROUND_LOCATION_PERMISSION_REQUEST = 2104
         private const val ROTA_NOTIFICATION_PERMISSION_REQUEST = 2105
         private const val WORK_NOTIFICATION_PERMISSION_REQUEST = 2106
+        private const val SHIFT_NOTIFICATION_PERMISSION_REQUEST = 2107
         private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
+        private const val MAX_SHARED_FILE_BYTES = 25_000_000
 
         @Volatile
         private var activeActivity: MainActivity? = null
@@ -86,6 +91,12 @@ class MainActivity : ComponentActivity() {
         cameraCaptureFile = null
     }
 
+    private val multiplePhotoPickerLauncher = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        val callback = fileChooserCallback ?: return@registerForActivityResult
+        callback.onReceiveValue(uris.distinct().toTypedArray().takeIf { it.isNotEmpty() })
+        fileChooserCallback = null
+    }
+
     private val createDocumentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val request = pendingFileSave ?: return@registerForActivityResult
         pendingFileSave = null
@@ -107,10 +118,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         activeActivity = this
         webView = WebView(this)
         configureWebView(webView)
         setContentView(webView)
+        queueActionFromIntent(intent)
         // A newly created WebView is blank even when the Activity receives a
         // non-null state bundle. Restore the WebView state explicitly; if
         // Android reclaimed it, load the trusted hosted PWA instead of leaving
@@ -134,6 +149,7 @@ class MainActivity : ComponentActivity() {
         // They remain encrypted until the trusted page acknowledges them.
         DeliveryLocationService.flushPendingSamples(this)
         if (::webView.isInitialized && isTrustedUri(Uri.parse(webView.url ?: ""))) sendShellReady()
+        deliverPendingNativeAction()
         if (backgroundSettingsRequested) {
             backgroundSettingsRequested = false
             val deliveryId = DeliveryLocationService.activeDeliveryId(this)
@@ -143,6 +159,13 @@ class MainActivity : ComponentActivity() {
                 sendNativeState("background_permission_required", deliveryId, "Open App permissions → Location and choose ${backgroundPermissionLabel()} if Android requires it")
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        queueActionFromIntent(intent)
+        deliverPendingNativeAction()
     }
 
     override fun onPause() {
@@ -234,6 +257,14 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
             "shift_tracker_file:save" -> requestNativeFileSave(message)
+            "shift_tracker_file:share" -> requestNativeShare(message)
+            "shift_tracker_state:sync" -> {
+                val snapshot = NativeShiftState.replace(this, message)
+                if (snapshot?.shiftActive == true && snapshot.settings.liveNotification && !hasNotificationPermission() && Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), SHIFT_NOTIFICATION_PERMISSION_REQUEST)
+                postNativeMessage(JSONObject().put("type", "shift_tracker_state:sync_result").put("accepted", snapshot != null).toString())
+            }
+            "shift_tracker_state:clear" -> NativeShiftState.clear(this)
+            "shift_tracker_native_action:ack" -> NativeShiftState.acknowledgeAction(this, message.optString("id"))
             "shift_tracker_rota:sync" -> {
                 val count = RotaReminderScheduler.replace(this, message.optJSONArray("reminders") ?: org.json.JSONArray())
                 postNativeMessage(JSONObject().put("type", "shift_tracker_rota:sync_result").put("scheduled", count).toString())
@@ -269,6 +300,18 @@ class MainActivity : ComponentActivity() {
             put("diagnostics", nativeDiagnostics())
         }.toString()
         postNativeMessage(payload)
+        deliverPendingNativeAction()
+    }
+
+    private fun queueActionFromIntent(intent: Intent?) {
+        val action = intent?.getStringExtra(NativeActionReceiver.EXTRA_ACTION) ?: return
+        NativeShiftState.queueAction(this, action)
+        intent.removeExtra(NativeActionReceiver.EXTRA_ACTION)
+    }
+
+    private fun deliverPendingNativeAction() {
+        val pending = NativeShiftState.peekPendingAction(this) ?: return
+        postNativeMessage(JSONObject().put("type", "shift_tracker_native_action:requested").put("id", pending.optString("id")).put("action", pending.optString("action")).toString())
     }
 
     private fun requestNativeWorkNotification(message: JSONObject) {
@@ -450,6 +493,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestNativeShare(message: JSONObject) {
+        val requestId = message.optString("requestId").trim()
+        val filename = message.optString("filename").trim()
+        val mimeType = message.optString("mimeType").trim().substringBefore(';').lowercase()
+        val safeName = filename.length in 1..120 && filename == File(filename).name && filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
+        val allowed = mimeType in setOf("application/pdf", "application/json", "text/csv", "text/plain", "image/jpeg", "image/png")
+        if (requestId.isEmpty() || requestId.length > 128 || !safeName || !allowed) return
+        val bytes = when {
+            message.has("base64") -> runCatching { Base64.getDecoder().decode(message.optString("base64")) }.getOrNull()
+            message.has("content") -> message.optString("content").toByteArray(StandardCharsets.UTF_8)
+            else -> null
+        } ?: return
+        if (bytes.isEmpty() || bytes.size > MAX_SHARED_FILE_BYTES) return
+        runCatching {
+            val directory = File(cacheDir, "shared-exports").apply { mkdirs() }
+            directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 60 * 60_000L }?.forEach(File::delete)
+            val output = File(directory, filename).apply { writeBytes(bytes) }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = ClipData.newRawUri("Shift Tracker export", uri)
+            }, "Share with"))
+            postNativeMessage(JSONObject().put("type", "shift_tracker_file:share_result").put("requestId", requestId).put("status", "opened").toString())
+        }.onFailure {
+            postNativeMessage(JSONObject().put("type", "shift_tracker_file:share_result").put("requestId", requestId).put("status", "error").toString())
+        }
+    }
+
     private fun sendFileSaveResult(requestId: String, status: String, message: String) {
         postNativeMessage(JSONObject()
             .put("type", "shift_tracker_file:save_result")
@@ -584,6 +657,7 @@ class MainActivity : ComponentActivity() {
             WORK_NOTIFICATION_PERMISSION_REQUEST -> {
                 if (hasNotificationPermission()) showPendingWorkNotification() else pendingWorkNotification = null
             }
+            SHIFT_NOTIFICATION_PERMISSION_REQUEST -> if (hasNotificationPermission()) NativeShiftState.read(this)?.let { if (it.shiftActive && it.settings.liveNotification) TrackerNotifications.showLiveShift(this, it) }
         }
     }
 
@@ -610,7 +684,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageFinished(view: WebView, url: String) {
             super.onPageFinished(view, url)
-            if (isTrustedUri(Uri.parse(url))) sendShellReady()
+            if (isTrustedUri(Uri.parse(url))) { sendShellReady(); deliverPendingNativeAction() }
         }
     }
 
@@ -629,6 +703,11 @@ class MainActivity : ComponentActivity() {
 
             val acceptTypes = fileChooserParams.acceptTypes.map { it.substringBefore(';').trim().lowercase() }.filter { it.isNotEmpty() }
             val imageRequest = acceptTypes.isEmpty() || acceptTypes.any { it == "image/*" || it.startsWith("image/") }
+            if (imageRequest && fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                return runCatching {
+                    multiplePhotoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }.fold(onSuccess = { true }, onFailure = { fileChooserCallback?.onReceiveValue(null); fileChooserCallback = null; false })
+            }
             val openIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)

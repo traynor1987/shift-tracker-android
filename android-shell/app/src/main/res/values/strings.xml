@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_small_description">Live Shift Tracker status and timer</string>
+    <string name="widget_medium_description">Live shift, deliveries, pay and safe shortcuts</string>
+    <string name="shortcut_open">Open tracker</string>
+    <string name="shortcut_open_long">Open Domino’s Shift Tracker</string>
+</resources>

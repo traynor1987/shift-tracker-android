@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="open_shift_tracker" android:enabled="true" android:icon="@mipmap/shift_tracker_launcher" android:shortcutShortLabel="@string/shortcut_open" android:shortcutLongLabel="@string/shortcut_open_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="site.chatgpt.traynor1987.dominosshifttracker.stable" android:targetClass="site.chatgpt.traynor1987.dominosshifttracker.MainActivity" />
+    </shortcut>
+</shortcuts>
