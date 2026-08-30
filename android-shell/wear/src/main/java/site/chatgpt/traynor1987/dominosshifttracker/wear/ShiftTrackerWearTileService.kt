@@ -10,7 +10,7 @@ import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
-import com.google.common.util.concurrent.Futures
+import androidx.concurrent.futures.CallbackToFutureAdapter
 import com.google.common.util.concurrent.ListenableFuture
 
 /** Battery-conscious Tile: it renders the mirrored snapshot and opens the full watch app for controls. */
@@ -40,9 +40,11 @@ class ShiftTrackerWearTileService : TileService() {
         val builtRoot = root.build()
         val layout = Layout.Builder().setRoot(builtRoot).build()
         val timeline = TimelineBuilders.Timeline.Builder().addTimelineEntry(TimelineBuilders.TimelineEntry.Builder().setLayout(layout).build()).build()
-        return Futures.immediateFuture(TileBuilders.Tile.Builder().setResourcesVersion("1").setTileTimeline(timeline).setFreshnessIntervalMillis(15 * 60_000L).build())
+        return immediate(TileBuilders.Tile.Builder().setResourcesVersion("1").setTileTimeline(timeline).setFreshnessIntervalMillis(15 * 60_000L).build())
     }
-    override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ListenableFuture<ResourceBuilders.Resources> = Futures.immediateFuture(ResourceBuilders.Resources.Builder().setVersion("1").build())
+    override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ListenableFuture<ResourceBuilders.Resources> = immediate(ResourceBuilders.Resources.Builder().setVersion("1").build())
+
+    private fun <T> immediate(value: T): ListenableFuture<T> = CallbackToFutureAdapter.getFuture { completer -> completer.set(value); "shift-tracker-tile" }
 }
 
 object WearTileRefresh { fun request(context: android.content.Context) { TileService.getUpdater(context).requestUpdate(ShiftTrackerWearTileService::class.java) } }
