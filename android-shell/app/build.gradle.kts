@@ -30,8 +30,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "2.2.14"
+        versionCode = 20
+        versionName = "2.2.15"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 
@@ -80,5 +80,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
     testImplementation(kotlin("test"))
 }

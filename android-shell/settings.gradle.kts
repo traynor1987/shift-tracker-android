@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ShiftTrackerAndroidShell"
-include(":app")
+include(":app", ":wear")

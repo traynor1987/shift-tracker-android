@@ -20,6 +20,7 @@ data class ShiftSnapshot(
     val activityStartedAt: Long,
     val deliveries: Int,
     val estimatedPay: String,
+    val storeStatus: String,
     val allowedActions: Set<String>,
     val updatedAt: Long,
     val settings: NativeFeatureSettings,
@@ -58,6 +59,7 @@ object NativeShiftState {
         TrackerNotifications.clearLiveShift(context)
         ShiftWidgetUpdater.updateAll(context, null)
         updateShortcuts(context, null)
+        WearSync.clear(context)
     }
 
     fun read(context: Context): ShiftSnapshot? {
@@ -73,6 +75,13 @@ object NativeShiftState {
         val payload = JSONObject().put("id", "native-${System.currentTimeMillis()}-${action}").put("action", action).put("createdAt", System.currentTimeMillis())
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
         return true
+    }
+
+    /** Watch and widget actions both enter through this guarded bridge; the web app still performs the action. */
+    fun queueRemoteAction(context: Context, action: String): Boolean {
+        val current = peekPendingAction(context)
+        if (current != null && System.currentTimeMillis() - current.optLong("createdAt") < 4_000L) return false
+        return queueAction(context, action)
     }
 
     fun peekPendingAction(context: Context): JSONObject? {
@@ -105,6 +114,7 @@ object NativeShiftState {
         ShiftWidgetUpdater.updateAll(context, snapshot)
         updateShortcuts(context, snapshot)
         ShiftReminderScheduler.replace(context, snapshot)
+        WearSync.publish(context, snapshot)
     }
 
     private fun validate(raw: JSONObject): JSONObject? {
@@ -136,6 +146,7 @@ object NativeShiftState {
             .put("activityStartedAtEpochMs", activityStartedAt)
             .put("deliveries", raw.optInt("deliveries", 0).coerceIn(0, 9999))
             .put("estimatedPay", raw.optString("estimatedPay").trim().take(40))
+            .put("storeStatus", raw.optString("storeStatus", "unknown").takeIf { it in setOf("at_store", "outside_store", "detecting", "unknown") } ?: "unknown")
             .put("allowedActions", actions)
             .put("updatedAtEpochMs", System.currentTimeMillis())
             .put("settings", settings)
@@ -146,7 +157,7 @@ object NativeShiftState {
         if (activity !in ACTIVITIES) return null
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
-        return ShiftSnapshot(value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
+        return ShiftSnapshot(value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
