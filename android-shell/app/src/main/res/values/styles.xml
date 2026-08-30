@@ -10,10 +10,13 @@
         <item name="android:layout_height">36dp</item>
         <item name="android:layout_weight">1</item>
         <item name="android:layout_margin">2dp</item>
-        <item name="android:background">@drawable/widget_button</item>
+        <item name="android:background">@drawable/widget_blue_button</item>
         <item name="android:gravity">center</item>
         <item name="android:textColor">#FFFFFFFF</item>
         <item name="android:textSize">11sp</item>
         <item name="android:textStyle">bold</item>
+    </style>
+    <style name="WidgetButtonRed" parent="WidgetButton">
+        <item name="android:background">@drawable/widget_red_button</item>
     </style>
 </resources>

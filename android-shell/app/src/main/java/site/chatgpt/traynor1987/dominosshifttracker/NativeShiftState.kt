@@ -166,11 +166,13 @@ object NativeShiftState {
 object ShiftWidgetUpdater {
     fun updateAll(context: Context, snapshot: ShiftSnapshot? = NativeShiftState.read(context)) {
         val manager = AppWidgetManager.getInstance(context)
-        listOf(SmallShiftWidget::class.java, MediumShiftWidget::class.java).forEach { provider ->
+        listOf(CompactShiftWidget::class.java, SmallShiftWidget::class.java, MediumShiftWidget::class.java, LargeShiftWidget::class.java).forEach { provider ->
             val ids = manager.getAppWidgetIds(ComponentName(context, provider))
             if (ids.isNotEmpty()) manager.notifyAppWidgetViewDataChanged(ids, android.R.id.text1)
         }
+        CompactShiftWidget.update(context, manager, manager.getAppWidgetIds(ComponentName(context, CompactShiftWidget::class.java)), snapshot)
         SmallShiftWidget.update(context, manager, manager.getAppWidgetIds(ComponentName(context, SmallShiftWidget::class.java)), snapshot)
         MediumShiftWidget.update(context, manager, manager.getAppWidgetIds(ComponentName(context, MediumShiftWidget::class.java)), snapshot)
+        LargeShiftWidget.update(context, manager, manager.getAppWidgetIds(ComponentName(context, LargeShiftWidget::class.java)), snapshot)
     }
 }

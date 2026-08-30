@@ -1,2 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources><color name="widget_primary">#F7F4EC</color><color name="widget_secondary">#C9C6BE</color></resources>
+<resources>
+    <color name="widget_primary">#FFFDF7</color>
+    <color name="widget_secondary">#CAD4E0</color>
+    <color name="widget_blue">#68B3FF</color>
+    <color name="widget_blue_deep">#0B3A72</color>
+    <color name="widget_red">#FF7180</color>
+    <color name="widget_cream">#141B24</color>
+</resources>
