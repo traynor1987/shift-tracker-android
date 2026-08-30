@@ -17,7 +17,20 @@ object WearState {
     private const val PREFS = "shift_tracker_wear_mirror_v1"; private const val KEY = "snapshot"
     fun read(context: Context): WearSnapshot? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)?.let { parse(it) }
     fun save(context: Context, raw: String) { if (parse(raw) != null) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply() }
-    fun clear(context: Context) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply() }
+    fun clear(context: Context) {
+        // Older phone releases delete the DataItem. Treat that as an explicit
+        // off-shift state rather than reviving the old timer from preferences.
+        save(context, JSONObject()
+            .put("shiftActive", false)
+            .put("activity", "idle")
+            .put("activityName", "")
+            .put("deliveries", 0)
+            .put("estimatedPay", "")
+            .put("storeStatus", "unknown")
+            .put("allowedActions", "")
+            .put("updatedAtEpochMs", System.currentTimeMillis())
+            .toString())
+    }
     private fun parse(raw: String): WearSnapshot? = runCatching {
         val o = JSONObject(raw); WearSnapshot(o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
     }.getOrNull()

@@ -19,8 +19,25 @@ object WearSync {
     const val RESULT_PATH = "/shift-tracker/action-result"
     private const val KEY_JSON = "snapshot"
 
+    /** A positive clocked-out reply replaces any last cached live watch state. */
+    private fun inactiveSnapshot() = ShiftSnapshot(
+        shiftActive = false,
+        shiftStartedAt = 0L,
+        activity = "idle",
+        activityName = "",
+        activityStartedAt = 0L,
+        deliveries = 0,
+        estimatedPay = "",
+        storeStatus = "unknown",
+        allowedActions = emptySet(),
+        updatedAt = System.currentTimeMillis(),
+        settings = NativeFeatureSettings(),
+    )
+
     fun publish(context: Context, snapshot: ShiftSnapshot? = null) {
-        val current = snapshot ?: NativeShiftState.read(context) ?: return
+        // A watch request after clock-out must overwrite its previous live
+        // state. Returning without a DataItem left the last timer running.
+        val current = snapshot ?: NativeShiftState.read(context) ?: inactiveSnapshot()
         val raw = JSONObject()
             .put("shiftActive", current.shiftActive)
             .put("shiftStartedAtEpochMs", current.shiftStartedAt)
@@ -41,7 +58,10 @@ object WearSync {
     }
 
     fun clear(context: Context) {
-        Wearable.getDataClient(context.applicationContext).deleteDataItems(android.net.Uri.parse("wear://*/$STATE_PATH"))
+        // Publish an explicit inactive state rather than only deleting the
+        // item: deletion is not guaranteed to reach a temporarily disconnected
+        // watch, while this payload safely replaces any stale cached snapshot.
+        publish(context, inactiveSnapshot())
     }
 
     fun reply(context: Context, nodeId: String, accepted: Boolean) {
