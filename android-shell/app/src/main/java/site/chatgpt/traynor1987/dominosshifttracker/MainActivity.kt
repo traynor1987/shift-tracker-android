@@ -29,6 +29,7 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.wearable.Wearable
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -79,6 +80,8 @@ class MainActivity : ComponentActivity() {
     private var pendingWorkNotification: String? = null
     private var expectedLocalReleaseHello: String? = null
     private var localReleaseFallbackAttempted = false
+    private var wearConnectionKnown = false
+    private var wearConnected = false
 
     private data class PendingFileSave(
         val requestId: String,
@@ -317,7 +320,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendShellReady() {
+    private fun sendShellReady(refreshWearConnection: Boolean = true) {
         val payload = JSONObject().apply {
             put("type", "shift_tracker_shell:ready")
             put("shellVersion", BuildConfig.VERSION_NAME)
@@ -330,9 +333,29 @@ class MainActivity : ComponentActivity() {
                 put("installedWebVersion", it.version)
                 put("previousWebVersion", it.previousVersion ?: JSONObject.NULL)
             }
+            if (wearConnectionKnown) put("wearConnected", wearConnected)
+            put("wearVersion", BuildConfig.VERSION_NAME)
         }.toString()
         postNativeMessage(payload)
         deliverPendingNativeAction()
+        if (refreshWearConnection) refreshWearConnection()
+    }
+
+    /** Presence comes from the Wear Data Layer only. It does not request watch
+     * location or create any tracking state. The matching companion version is
+     * built and signed with this Android release. */
+    private fun refreshWearConnection() {
+        Wearable.getNodeClient(this).connectedNodes
+            .addOnSuccessListener { nodes ->
+                wearConnectionKnown = true
+                wearConnected = nodes.isNotEmpty()
+                sendShellReady(refreshWearConnection = false)
+            }
+            .addOnFailureListener {
+                wearConnectionKnown = true
+                wearConnected = false
+                sendShellReady(refreshWearConnection = false)
+            }
     }
 
     private fun queueActionFromIntent(intent: Intent?) {
