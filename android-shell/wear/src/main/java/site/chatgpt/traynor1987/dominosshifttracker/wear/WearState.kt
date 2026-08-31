@@ -8,7 +8,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import com.google.android.gms.wearable.Wearable
 import org.json.JSONObject
 
-data class WearSnapshot(val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
+data class WearSnapshot(val stateRevision: Long, val shiftId: String, val activityId: String, val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
     val disconnected: Boolean get() = updatedAt <= 0L || System.currentTimeMillis() - updatedAt > 12 * 60 * 60_000L
 }
 
@@ -32,7 +32,7 @@ object WearState {
             .toString())
     }
     private fun parse(raw: String): WearSnapshot? = runCatching {
-        val o = JSONObject(raw); WearSnapshot(o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
+        val o = JSONObject(raw); WearSnapshot(o.optLong("stateRevision"), o.optString("shiftId"), o.optString("activityId"), o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
     }.getOrNull()
 }
 
@@ -51,12 +51,20 @@ class WearStateListenerService : WearableListenerService() {
             }
         } }
     }
-    override fun onMessageReceived(event: MessageEvent) { if (event.path == WearState.RESULT_PATH) WearTileRefresh.request(this) }
+    override fun onMessageReceived(event: MessageEvent) { if (event.path == WearState.RESULT_PATH) { WearTileRefresh.request(this); WearTransport.requestState(this) } }
 }
 
 object WearTransport {
     fun sendAction(context: Context, action: String) {
-        Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WearState.ACTION_PATH, action.toByteArray()) } }
+        val state = WearState.read(context) ?: return
+        val payload = JSONObject()
+            .put("id", "wear-${System.currentTimeMillis()}-${action}")
+            .put("action", action)
+            .put("expectedStateRevision", state.stateRevision)
+            .put("expectedShiftId", state.shiftId)
+            .put("expectedActivityId", state.activityId)
+            .toString().toByteArray()
+        Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WearState.ACTION_PATH, payload) } }
     }
     fun requestState(context: Context) { Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WearState.REQUEST_PATH, byteArrayOf()) } } }
 }

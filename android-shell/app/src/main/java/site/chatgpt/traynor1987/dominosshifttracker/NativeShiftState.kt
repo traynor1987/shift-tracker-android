@@ -13,6 +13,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ShiftSnapshot(
+    val stateRevision: Long,
+    val shiftId: String,
+    val activityId: String,
     val shiftActive: Boolean,
     val shiftStartedAt: Long,
     val activity: String,
@@ -72,16 +75,43 @@ object NativeShiftState {
         if (action !in ACTIONS) return false
         val snapshot = read(context) ?: return action == "open"
         if (action != "open" && (snapshot.isStale || action !in snapshot.allowedActions)) return false
-        val payload = JSONObject().put("id", "native-${System.currentTimeMillis()}-${action}").put("action", action).put("createdAt", System.currentTimeMillis())
+        val payload = JSONObject()
+            .put("id", "native-${System.currentTimeMillis()}-${action}")
+            .put("action", action)
+            .put("createdAt", System.currentTimeMillis())
+            .put("expectedStateRevision", snapshot.stateRevision)
+            .put("expectedShiftId", snapshot.shiftId)
+            .put("expectedActivityId", snapshot.activityId)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
         return true
     }
 
     /** Watch and widget actions both enter through this guarded bridge; the web app still performs the action. */
-    fun queueRemoteAction(context: Context, action: String): Boolean {
+    fun queueRemoteAction(context: Context, request: JSONObject, sourceNodeId: String): String {
+        val action = request.optString("action")
+        if (action !in ACTIONS) return "invalid_action"
         val current = peekPendingAction(context)
-        if (current != null && System.currentTimeMillis() - current.optLong("createdAt") < 4_000L) return false
-        return queueAction(context, action)
+        if (current != null && System.currentTimeMillis() - current.optLong("createdAt") < 4_000L) return "already_pending"
+        val snapshot = read(context) ?: return "stale_state"
+        if (snapshot.isStale || action !in snapshot.allowedActions) return "invalid_action"
+        val expectedRevision = request.optLong("expectedStateRevision", -1L)
+        val expectedShiftId = request.optString("expectedShiftId")
+        val expectedActivityId = request.optString("expectedActivityId")
+        if ((expectedRevision >= 0L && expectedRevision != snapshot.stateRevision)
+            || (expectedShiftId.isNotBlank() && expectedShiftId != snapshot.shiftId)
+            || (expectedActivityId.isNotBlank() && expectedActivityId != snapshot.activityId)) return "stale_state"
+        val id = request.optString("id").takeIf { it.isNotBlank() && it.length <= 160 }
+            ?: "wear-${System.currentTimeMillis()}-${action}"
+        val payload = JSONObject()
+            .put("id", id)
+            .put("action", action)
+            .put("createdAt", System.currentTimeMillis())
+            .put("expectedStateRevision", snapshot.stateRevision)
+            .put("expectedShiftId", snapshot.shiftId)
+            .put("expectedActivityId", snapshot.activityId)
+            .put("sourceNodeId", sourceNodeId.take(160))
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
+        return "queued"
     }
 
     fun peekPendingAction(context: Context): JSONObject? {
@@ -96,6 +126,13 @@ object NativeShiftState {
     fun acknowledgeAction(context: Context, id: String) {
         val current = peekPendingActionUnsafe(context)
         if (current?.optString("id") == id) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PENDING_ACTION).apply()
+    }
+
+    fun completeAction(context: Context, id: String): JSONObject? {
+        val current = peekPendingActionUnsafe(context)
+        if (current?.optString("id") != id) return null
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PENDING_ACTION).apply()
+        return current
     }
 
     fun actionPendingIntent(context: Context, action: String, requestCode: Int): PendingIntent = PendingIntent.getActivity(
@@ -139,6 +176,9 @@ object NativeShiftState {
             .put("taskReminders", inputSettings.optBoolean("taskReminders", false))
             .put("photoCompression", if (inputSettings.optString("photoCompression") == "original") "original" else "automatic")
         return JSONObject()
+            .put("stateRevision", raw.optLong("stateRevision", 0L).coerceAtLeast(0L))
+            .put("shiftId", raw.optString("shiftId").trim().take(128))
+            .put("activityId", raw.optString("activityId").trim().take(128))
             .put("shiftActive", shiftActive)
             .put("shiftStartedAtEpochMs", shiftStartedAt)
             .put("activity", activity)
@@ -157,7 +197,7 @@ object NativeShiftState {
         if (activity !in ACTIVITIES) return null
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
-        return ShiftSnapshot(value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
+        return ShiftSnapshot(value.optLong("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }

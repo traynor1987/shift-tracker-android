@@ -7,10 +7,23 @@ source is authoritative; older reports are historical evidence only.
 
 - **Project:** Domino's Shift Tracker
 - **Production URL:** https://dominos-shift-tracker.traynor1987.chatgpt.site/
-- **Web version paired with this shell:** **2.1.82**.
-- **Android shell version:** **2.2.10** (`android-shell/app/build.gradle.kts`),
-  versionCode 15, bridge version 1. The bridge version stays compatible so
+- **Web version paired with this shell:** **2.1.98**.
+- **Android shell version:** **2.2.20** (`android-shell/app/build.gradle.kts`),
+  versionCode 25, bridge version 1. The bridge version stays compatible so
   ordinary hosted-PWA refreshes do not require an APK rebuild.
+
+## Android 2.2.20 — authoritative companion action results
+
+- Phone widgets, notifications and Wear OS now attach the mirrored shift ID,
+  activity ID and exact web-state revision to every requested action.
+- The phone validates that identity before queueing a remote tap. Stale watch
+  screens cannot apply an action to a newer delivery, task or shift.
+- A queued watch action is no longer treated as completed. The PWA returns a
+  structured final result only after the existing web action path runs, then a
+  newer authoritative snapshot refreshes every native surface.
+- Legacy 2.2.19 acknowledgement remains supported during the web/app upgrade
+  window. Package ID, signing workflow and protected GPS/geofence subsystem are
+  unchanged.
 
 ## Android 2.2.10 — task notifications, geofence alerts and multi-photo repair
 

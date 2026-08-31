@@ -21,6 +21,9 @@ object WearSync {
 
     /** A positive clocked-out reply replaces any last cached live watch state. */
     private fun inactiveSnapshot() = ShiftSnapshot(
+        stateRevision = System.currentTimeMillis(),
+        shiftId = "",
+        activityId = "",
         shiftActive = false,
         shiftStartedAt = 0L,
         activity = "idle",
@@ -39,6 +42,9 @@ object WearSync {
         // state. Returning without a DataItem left the last timer running.
         val current = snapshot ?: NativeShiftState.read(context) ?: inactiveSnapshot()
         val raw = JSONObject()
+            .put("stateRevision", current.stateRevision)
+            .put("shiftId", current.shiftId)
+            .put("activityId", current.activityId)
             .put("shiftActive", current.shiftActive)
             .put("shiftStartedAtEpochMs", current.shiftStartedAt)
             .put("activity", current.activity)
@@ -64,8 +70,10 @@ object WearSync {
         publish(context, inactiveSnapshot())
     }
 
-    fun reply(context: Context, nodeId: String, accepted: Boolean) {
-        Wearable.getMessageClient(context).sendMessage(nodeId, RESULT_PATH, if (accepted) "accepted".toByteArray() else "rejected".toByteArray())
+    fun reply(context: Context, nodeId: String, id: String, outcome: String, stateRevision: Long? = null) {
+        val payload = JSONObject().put("id", id).put("outcome", outcome)
+        stateRevision?.let { payload.put("stateRevision", it) }
+        Wearable.getMessageClient(context).sendMessage(nodeId, RESULT_PATH, payload.toString().toByteArray())
     }
 }
 
@@ -75,13 +83,15 @@ class PhoneWearListenerService : WearableListenerService() {
         when (event.path) {
             WearSync.REQUEST_PATH -> WearSync.publish(this)
             WearSync.ACTION_PATH -> {
-                val action = event.data.toString(Charsets.UTF_8)
-                val accepted = NativeShiftState.queueRemoteAction(this, action)
-                if (accepted) startActivity(Intent(this, MainActivity::class.java)
+                val raw = event.data.toString(Charsets.UTF_8)
+                val request = runCatching { JSONObject(raw) }.getOrElse {
+                    JSONObject().put("id", "legacy-${System.currentTimeMillis()}").put("action", raw)
+                }
+                val outcome = NativeShiftState.queueRemoteAction(this, request, event.sourceNodeId)
+                if (outcome == "queued") startActivity(Intent(this, MainActivity::class.java)
                     .setAction(NativeActionReceiver.ACTION_RUN_ACTIVITY)
-                    .putExtra(NativeActionReceiver.EXTRA_ACTION, action)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-                WearSync.reply(this, event.sourceNodeId, accepted)
+                WearSync.reply(this, event.sourceNodeId, request.optString("id"), outcome, NativeShiftState.read(this)?.stateRevision)
             }
         }
     }

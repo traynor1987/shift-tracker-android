@@ -269,6 +269,15 @@ class MainActivity : ComponentActivity() {
             }
             "shift_tracker_state:clear" -> NativeShiftState.clear(this)
             "shift_tracker_native_action:ack" -> NativeShiftState.acknowledgeAction(this, message.optString("id"))
+            "shift_tracker_native_action:result" -> {
+                val id = message.optString("id")
+                val outcome = message.optString("outcome").takeIf { it in setOf("applied", "already_applied", "stale_state", "invalid_action", "error") } ?: "error"
+                val pending = NativeShiftState.completeAction(this, id)
+                pending?.optString("sourceNodeId")?.takeIf { it.isNotBlank() }?.let { nodeId ->
+                    WearSync.reply(this, nodeId, id, outcome, message.optLong("stateRevision", -1L).takeIf { it >= 0L })
+                }
+                WearSync.publish(this)
+            }
             "shift_tracker_rota:sync" -> {
                 val count = RotaReminderScheduler.replace(this, message.optJSONArray("reminders") ?: org.json.JSONArray())
                 postNativeMessage(JSONObject().put("type", "shift_tracker_rota:sync_result").put("scheduled", count).toString())
@@ -315,7 +324,14 @@ class MainActivity : ComponentActivity() {
 
     private fun deliverPendingNativeAction() {
         val pending = NativeShiftState.peekPendingAction(this) ?: return
-        postNativeMessage(JSONObject().put("type", "shift_tracker_native_action:requested").put("id", pending.optString("id")).put("action", pending.optString("action")).toString())
+        postNativeMessage(JSONObject()
+            .put("type", "shift_tracker_native_action:requested")
+            .put("id", pending.optString("id"))
+            .put("action", pending.optString("action"))
+            .put("expectedStateRevision", pending.optLong("expectedStateRevision", -1L))
+            .put("expectedShiftId", pending.optString("expectedShiftId"))
+            .put("expectedActivityId", pending.optString("expectedActivityId"))
+            .toString())
     }
 
     private fun requestNativeWorkNotification(message: JSONObject) {
