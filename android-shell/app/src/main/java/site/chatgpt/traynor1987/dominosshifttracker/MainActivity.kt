@@ -817,7 +817,7 @@ class MainActivity : ComponentActivity() {
 
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): android.webkit.WebResourceResponse? {
             val uri = request.url
-            if (request.method == "GET" && isTrustedUri(uri)) webReleaseStore.localResponse(uri.path) ?.let { return it }
+            if (request.method == "GET" && isTrustedUri(uri)) webReleaseStore.localResponse(uri.path ?: "/") ?.let { return it }
             return super.shouldInterceptRequest(view, request)
         }
 

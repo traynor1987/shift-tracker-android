@@ -149,7 +149,7 @@ class VerifiedWebReleaseStore(private val context: Context) {
         val connection = (URL("$ORIGIN$path").openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 30_000; requestMethod = "GET"; setRequestProperty("Cache-Control", "no-cache")
         }
-        try {
+        return try {
             val response = connection
             require(response.responseCode == HttpURLConnection.HTTP_OK) { "Published web release download failed" }
             val expected = response.contentLengthLong
