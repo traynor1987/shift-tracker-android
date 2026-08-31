@@ -33,9 +33,10 @@ import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import java.util.concurrent.Executors
 
 /**
- * Remote, origin-locked WebView shell. The PWA remains the source of truth;
+ * Origin-locked WebView shell. The PWA remains the source of truth;
  * this activity only brokers the native foreground GPS service after a
  * trusted PWA request. User-selected camera/files and explicit JSON/CSV export
  * use Android system pickers; no broad storage or arbitrary filesystem bridge
@@ -64,6 +65,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var webView: WebView
+    private lateinit var webReleaseStore: VerifiedWebReleaseStore
+    private val webReleaseExecutor = Executors.newSingleThreadExecutor()
     private var pendingStartDeliveryId: String? = null
     private var backgroundSettingsRequested = false
     private var pendingBackgroundPermissionRequest = false
@@ -74,6 +77,8 @@ class MainActivity : ComponentActivity() {
     private var cameraCaptureFile: File? = null
     private var pendingFileSave: PendingFileSave? = null
     private var pendingWorkNotification: String? = null
+    private var expectedLocalReleaseHello: String? = null
+    private var localReleaseFallbackAttempted = false
 
     private data class PendingFileSave(
         val requestId: String,
@@ -125,6 +130,7 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         activeActivity = this
+        webReleaseStore = VerifiedWebReleaseStore(this)
         webView = WebView(this)
         configureWebView(webView)
         setContentView(webView)
@@ -134,7 +140,7 @@ class MainActivity : ComponentActivity() {
         // Android reclaimed it, load the trusted hosted PWA instead of leaving
         // a permanent black surface until the task is force-closed.
         val restored = savedInstanceState?.let { webView.restoreState(it) != null } ?: false
-        if (!restored) webView.loadUrl(TRUSTED_ORIGIN)
+        if (!restored) loadTracker()
     }
 
     override fun onResume() {
@@ -144,7 +150,7 @@ class MainActivity : ComponentActivity() {
             webView.onResume()
             webView.resumeTimers()
             webView.postDelayed({
-                if (!isFinishing && !isDestroyed && webView.url.isNullOrBlank()) webView.loadUrl(TRUSTED_ORIGIN)
+                if (!isFinishing && !isDestroyed && webView.url.isNullOrBlank()) loadTracker()
                 else webView.invalidate()
             }, 350L)
         }
@@ -192,6 +198,7 @@ class MainActivity : ComponentActivity() {
         pendingFileSave = null
         cameraCaptureFile?.delete()
         if (::webView.isInitialized) webView.destroy()
+        webReleaseExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -208,7 +215,7 @@ class MainActivity : ComponentActivity() {
             webView = replacement
             setContentView(replacement)
             failedView.destroy()
-            replacement.loadUrl(TRUSTED_ORIGIN)
+            loadTracker()
         } else failedView.destroy()
     }
 
@@ -252,10 +259,18 @@ class MainActivity : ComponentActivity() {
     private fun handleBridgeMessage(raw: String?) {
         val message = runCatching { JSONObject(raw ?: return) }.getOrNull() ?: return
         when (message.optString("type")) {
-            "shift_tracker_shell:hello", "shift_tracker_shell:refresh_requested" -> {
+            "shift_tracker_shell:hello" -> {
+                // A trusted PWA handshake proves that the active release
+                // reached the bridge. Only this cancels the one-shot startup
+                // fallback timer for a newly activated local release.
+                expectedLocalReleaseHello = null
                 sendShellReady()
                 DeliveryLocationService.flushPendingSamples(this)
+                bootstrapVerifiedWebRelease()
             }
+            "shift_tracker_shell:refresh_requested", "shift_tracker_web_update:check" -> checkWebUpdate()
+            "shift_tracker_web_update:install" -> installWebUpdate()
+            "shift_tracker_web_update:rollback" -> rollbackWebUpdate()
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
@@ -311,6 +326,10 @@ class MainActivity : ComponentActivity() {
             put("trackingActive", DeliveryLocationService.isRunning())
             put("trackedDeliveryId", DeliveryLocationService.activeDeliveryId(this@MainActivity) ?: JSONObject.NULL)
             put("diagnostics", nativeDiagnostics())
+            webReleaseStore.installed()?.let {
+                put("installedWebVersion", it.version)
+                put("previousWebVersion", it.previousVersion ?: JSONObject.NULL)
+            }
         }.toString()
         postNativeMessage(payload)
         deliverPendingNativeAction()
@@ -372,6 +391,54 @@ class MainActivity : ComponentActivity() {
             trustedReplyProxy?.postMessage(payload)
                 ?: WebViewCompat.postWebMessage(webView, WebMessageCompat(payload), Uri.parse(TRUSTED_ORIGIN))
         }.isSuccess
+    }
+
+    /** Web-release work runs on a background executor; WebView replies must
+     * always return to its UI thread. */
+    private fun postWebUpdate(payload: JSONObject) {
+        runOnUiThread {
+            if (!isDestroyed) postNativeMessage(payload.toString())
+        }
+    }
+
+    private fun loadTracker() { webView.loadUrl(TRUSTED_ORIGIN) }
+
+    /** First launch may use the hosted PWA once, then quietly creates the
+     * initial verified local copy. Later versions are always user-confirmed. */
+    private fun bootstrapVerifiedWebRelease() {
+        if (webReleaseStore.installed() != null) return
+        webReleaseExecutor.execute {
+            webReleaseStore.install { }.also { result ->
+                if (result is VerifiedWebReleaseStore.InstallResult.Success) postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:bootstrap_complete").put("webVersion", result.version))
+            }
+        }
+    }
+
+    private fun checkWebUpdate() {
+        postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:checking"))
+        webReleaseExecutor.execute {
+            runCatching { webReleaseStore.check() }.onSuccess { check ->
+                postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:available")
+                    .put("hostedVersion", check.hostedVersion).put("installedVersion", check.installedVersion ?: JSONObject.NULL)
+                    .put("updateAvailable", check.updateAvailable).put("apkVersion", BuildConfig.VERSION_NAME))
+            }.onFailure { error -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:failed").put("message", error.message ?: "Could not check for a Web Update")) }
+        }
+    }
+
+    private fun installWebUpdate() {
+        webReleaseExecutor.execute {
+            val result = webReleaseStore.install { progress -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:progress").put("phase", progress.phase).put("completed", progress.completed).put("total", progress.total)) }
+            when (result) {
+                is VerifiedWebReleaseStore.InstallResult.Success -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:installed").put("webVersion", result.version).put("apkVersion", BuildConfig.VERSION_NAME))
+                is VerifiedWebReleaseStore.InstallResult.Failure -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:failed").put("message", result.message))
+            }
+        }
+    }
+
+    private fun rollbackWebUpdate() {
+        val rollback = webReleaseStore.rollback()
+        postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:rollback_result").put("webVersion", rollback?.version ?: JSONObject.NULL))
+        if (rollback != null) runOnUiThread(::loadTracker)
     }
 
     /**
@@ -737,6 +804,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
             trustedReplyProxy = null
+            expectedLocalReleaseHello = webReleaseStore.installed()?.version
             super.onPageStarted(view, url, favicon)
         }
 
@@ -747,9 +815,27 @@ class MainActivity : ComponentActivity() {
             return true
         }
 
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): android.webkit.WebResourceResponse? {
+            val uri = request.url
+            if (request.method == "GET" && isTrustedUri(uri)) webReleaseStore.localResponse(uri.path) ?.let { return it }
+            return super.shouldInterceptRequest(view, request)
+        }
+
         override fun onPageFinished(view: WebView, url: String) {
             super.onPageFinished(view, url)
-            if (isTrustedUri(Uri.parse(url))) { sendShellReady(); deliverPendingNativeAction() }
+            if (isTrustedUri(Uri.parse(url))) {
+                val expected = expectedLocalReleaseHello
+                if (expected != null) view.postDelayed({
+                    if (expectedLocalReleaseHello == expected && !localReleaseFallbackAttempted) {
+                        webReleaseStore.rollback()?.let {
+                            localReleaseFallbackAttempted = true
+                            expectedLocalReleaseHello = null
+                            loadTracker()
+                        }
+                    }
+                }, 8_000L)
+                sendShellReady(); deliverPendingNativeAction()
+            }
         }
     }
 
