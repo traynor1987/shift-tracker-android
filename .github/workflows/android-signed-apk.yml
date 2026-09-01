@@ -2,6 +2,22 @@ name: Android signed APK
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish this verified signed build as a public stable GitHub Release"
+        required: true
+        default: false
+        type: boolean
+      minimum_web_version:
+        description: "Minimum compatible Shift Tracker Web App version"
+        required: true
+        default: "2.1.129"
+        type: string
+      release_notes:
+        description: "Short public release notes"
+        required: true
+        default: "Native Android improvements"
+        type: string
   push:
     paths:
       - "android-shell/**"
@@ -17,6 +33,9 @@ jobs:
     defaults:
       run:
         working-directory: android-shell
+    outputs:
+      version_name: ${{ steps.release_assets.outputs.version_name }}
+      version_code: ${{ steps.release_assets.outputs.version_code }}
 
     steps:
       - name: Check out source
@@ -83,7 +102,7 @@ jobs:
           APK="wear/build/outputs/apk/release/wear-release.apk"
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
-          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable' versionCode='27' versionName='2.2.22'"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable'"
           sha256sum "$APK" > "$APK.sha256"
           cat "$APK.sha256"
 
@@ -99,6 +118,85 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Prepare public stable release assets
+        id: release_assets
+        shell: bash
+        env:
+          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.129' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Native Android improvements' }}
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          BADGING=$("$BUILD_TOOLS/aapt" dump badging "$APK")
+          VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$BADGING")
+          VERSION_CODE=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<< "$BADGING")
+          test -n "$VERSION_NAME" && test -n "$VERSION_CODE"
+          [[ "$MINIMUM_WEB_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          RELEASE_DIR="$RUNNER_TEMP/shift-tracker-release"
+          mkdir -p "$RELEASE_DIR"
+          RELEASE_APK="$RELEASE_DIR/Shift-Tracker-$VERSION_NAME.apk"
+          cp "$APK" "$RELEASE_APK"
+          SHA256=$(sha256sum "$RELEASE_APK" | awk '{print $1}')
+          jq -n \
+            --arg channel "stable" \
+            --arg versionName "$VERSION_NAME" \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg minimumWebVersion "$MINIMUM_WEB_VERSION" \
+            --arg apkFile "Shift-Tracker-$VERSION_NAME.apk" \
+            --arg sha256 "$SHA256" \
+            --arg notes "$RELEASE_NOTES" \
+            '{channel:$channel,versionName:$versionName,versionCode:$versionCode,minimumWebVersion:$minimumWebVersion,apkFile:$apkFile,sha256:$sha256,releaseNotes:($notes | split("\n") | map(select(length > 0)))}' > "$RELEASE_DIR/shift-tracker-android-release.json"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "release_dir=$RELEASE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: shift-tracker-public-release-bundle
+          path: ${{ steps.release_assets.outputs.release_dir }}
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Remove temporary keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/shift-tracker-release.jks"
+
+  publish-stable-release:
+    name: Publish verified public stable release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    needs: build-signed-apk
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: shift-tracker-public-release-bundle
+          path: release-bundle
+
+      - name: Guard public release versionCode
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ needs.build-signed-apk.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          METADATA_URL=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "shift-tracker-android-release.json") | .browser_download_url' | head -n1 || true)
+          if [ -n "$METADATA_URL" ]; then
+            PREVIOUS_CODE=$(curl --fail --silent --show-error --location "$METADATA_URL" | jq -r '.versionCode')
+            test "$PREVIOUS_CODE" -lt "$VERSION_CODE"
+          fi
+
+      - name: Publish verified public stable GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ needs.build-signed-apk.outputs.version_name }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_NOTES"
+          gh release create "v$VERSION_NAME" release-bundle/Shift-Tracker-"$VERSION_NAME".apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --title "Shift Tracker Android $VERSION_NAME" --notes "$RELEASE_NOTES" --latest
