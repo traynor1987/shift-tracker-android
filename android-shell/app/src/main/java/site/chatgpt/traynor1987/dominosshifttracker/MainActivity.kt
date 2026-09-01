@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var webReleaseStore: VerifiedWebReleaseStore
+    private lateinit var apkUpdateManager: AndroidApkUpdateManager
     private val webReleaseExecutor = Executors.newSingleThreadExecutor()
     private var pendingStartDeliveryId: String? = null
     private var backgroundSettingsRequested = false
@@ -134,6 +135,7 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         activeActivity = this
         webReleaseStore = VerifiedWebReleaseStore(this)
+        apkUpdateManager = AndroidApkUpdateManager(this, webReleaseExecutor, ::postApkUpdate)
         webView = WebView(this)
         configureWebView(webView)
         setContentView(webView)
@@ -270,10 +272,15 @@ class MainActivity : ComponentActivity() {
                 sendShellReady()
                 DeliveryLocationService.flushPendingSamples(this)
                 bootstrapVerifiedWebRelease()
+                // A lightweight discovery check is rate-limited inside the
+                // updater; it never downloads or installs anything.
+                apkUpdateManager.check(manual = false, installedWebVersion = message.optString("webVersion").takeIf { it.isNotBlank() })
             }
             "shift_tracker_shell:refresh_requested", "shift_tracker_web_update:check" -> checkWebUpdate()
             "shift_tracker_web_update:install" -> installWebUpdate()
             "shift_tracker_web_update:rollback" -> rollbackWebUpdate()
+            "shift_tracker_apk_update:check" -> apkUpdateManager.check(message.optBoolean("manual", true), message.optString("webVersion").takeIf { it.isNotBlank() })
+            "shift_tracker_apk_update:install" -> apkUpdateManager.downloadAndInstall()
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
@@ -419,6 +426,14 @@ class MainActivity : ComponentActivity() {
     /** Web-release work runs on a background executor; WebView replies must
      * always return to its UI thread. */
     private fun postWebUpdate(payload: JSONObject) {
+        runOnUiThread {
+            if (!isDestroyed) postNativeMessage(payload.toString())
+        }
+    }
+
+    /** APK updates have their own message channel. They never reuse the Web
+     * release store or alter WebView data. */
+    private fun postApkUpdate(payload: JSONObject) {
         runOnUiThread {
             if (!isDestroyed) postNativeMessage(payload.toString())
         }

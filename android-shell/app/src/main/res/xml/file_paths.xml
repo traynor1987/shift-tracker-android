@@ -6,4 +6,7 @@
     <cache-path
         name="shift_tracker_shared_exports"
         path="shared-exports/" />
+    <cache-path
+        name="shift_tracker_apk_updates"
+        path="apk-updates/" />
 </paths>
