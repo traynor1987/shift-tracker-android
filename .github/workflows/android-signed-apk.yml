@@ -123,8 +123,8 @@ jobs:
         id: release_assets
         shell: bash
         env:
-          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.129' }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Native Android improvements' }}
+          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.144' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Keep companion pay current and enlarge Wear controls' }}
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
@@ -174,7 +174,7 @@ jobs:
 
   publish-stable-release:
     name: Publish verified public stable release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build-signed-apk
     runs-on: ubuntu-24.04
     permissions:
