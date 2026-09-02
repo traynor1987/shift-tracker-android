@@ -1,6 +1,9 @@
 package site.chatgpt.traynor1987.dominosshifttracker.wear
 
+import android.Manifest
 import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.*
@@ -11,8 +14,8 @@ import com.google.android.gms.wearable.*
 class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
     private lateinit var dial:WearDialView; private lateinit var state:TextView; private lateinit var timer:Chronometer; private lateinit var detail:TextView; private lateinit var actions:ArcActionLayout
     private val handler=Handler(Looper.getMainLooper())
-    override fun onCreate(b:Bundle?){super.onCreate(b); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); build(); request(); render()}
-    override fun onResume(){super.onResume();Wearable.getDataClient(this).addListener(this);request();render()}
+    override fun onCreate(b:Bundle?){super.onCreate(b); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),226); build(); request(); render()}
+    override fun onResume(){super.onResume();Wearable.getDataClient(this).addListener(this);if(hasReadyWearUpdate(this))startActivity(Intent(this,WearUpdateActivity::class.java));request();render()}
     override fun onPause(){Wearable.getDataClient(this).removeListener(this);handler.removeCallbacksAndMessages(null);super.onPause()}
     override fun onDataChanged(es:DataEventBuffer){es.use{it.forEach{e->if(e.dataItem.uri.path==WearState.STATE_PATH){if(e.type==DataEvent.TYPE_DELETED)WearState.clear(this);runOnUiThread{render()}}}}}
     private fun build(){val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK);keepScreenOn=true};dial=WearDialView(this);root.addView(dial,FrameLayout.LayoutParams(-1,-1));val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(34,22,34,108)}
