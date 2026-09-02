@@ -128,6 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
+          WEAR_APK="wear/build/outputs/apk/release/wear-release.apk"
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
           BADGING=$("$BUILD_TOOLS/aapt" dump badging "$APK")
           VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$BADGING")
