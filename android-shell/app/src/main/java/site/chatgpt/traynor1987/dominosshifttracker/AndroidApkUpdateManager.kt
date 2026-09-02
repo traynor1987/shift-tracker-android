@@ -88,6 +88,7 @@ class AndroidApkUpdateManager(
             runCatching {
                 val apk = downloadVerified(selected)
                 verifyPackageIdentity(apk, selected.metadata)
+                emit(status("verified").put("latestVersion", selected.metadata.versionName))
                 openPackageInstaller(apk)
                 status("installer_opened").put("latestVersion", selected.metadata.versionName)
             }.onSuccess(emit).onFailure { error ->
