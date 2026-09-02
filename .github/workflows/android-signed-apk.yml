@@ -204,7 +204,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_NAME: ${{ needs.build-signed-apk.outputs.version_name }}
-          RELEASE_NOTES: ${{ inputs.release_notes }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Keep companion pay current and enlarge Wear controls' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_NOTES"
