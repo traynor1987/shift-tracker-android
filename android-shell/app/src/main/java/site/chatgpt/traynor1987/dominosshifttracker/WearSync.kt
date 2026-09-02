@@ -17,6 +17,7 @@ object WearSync {
     const val ACTION_PATH = "/shift-tracker/action"
     const val REQUEST_PATH = "/shift-tracker/request-state"
     const val RESULT_PATH = "/shift-tracker/action-result"
+    const val WEAR_VERSION_PATH = WearUpdateManager.VERSION
     private const val KEY_JSON = "snapshot"
 
     /** A positive clocked-out reply replaces any last cached live watch state. */
@@ -75,6 +76,7 @@ object WearSync {
         stateRevision?.let { payload.put("stateRevision", it) }
         Wearable.getMessageClient(context).sendMessage(nodeId, RESULT_PATH, payload.toString().toByteArray())
     }
+    fun requestWearVersion(context: Context) { Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WEAR_VERSION_PATH, byteArrayOf()) } } }
 }
 
 /** Receives a request from the watch then starts the existing phone/WebView action path. */
@@ -93,6 +95,7 @@ class PhoneWearListenerService : WearableListenerService() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 WearSync.reply(this, event.sourceNodeId, request.optString("id"), outcome, NativeShiftState.read(this)?.stateRevision)
             }
+            WearUpdateManager.STATUS -> WearUpdateManager.receiveStatus(this, event.data.toString(Charsets.UTF_8))
         }
     }
 }

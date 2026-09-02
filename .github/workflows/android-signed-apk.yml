@@ -90,6 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
+          WEAR_APK="wear/build/outputs/apk/release/wear-release.apk"
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/35.0.0"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='site.chatgpt.traynor1987.dominosshifttracker.stable'"
@@ -131,13 +132,19 @@ jobs:
           BADGING=$("$BUILD_TOOLS/aapt" dump badging "$APK")
           VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$BADGING")
           VERSION_CODE=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<< "$BADGING")
+          WEAR_BADGING=$("$BUILD_TOOLS/aapt" dump badging "$WEAR_APK")
+          WEAR_VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$WEAR_BADGING")
+          WEAR_VERSION_CODE=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<< "$WEAR_BADGING")
           test -n "$VERSION_NAME" && test -n "$VERSION_CODE"
           [[ "$MINIMUM_WEB_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           RELEASE_DIR="$RUNNER_TEMP/shift-tracker-release"
           mkdir -p "$RELEASE_DIR"
           RELEASE_APK="$RELEASE_DIR/Shift-Tracker-$VERSION_NAME.apk"
+          RELEASE_WEAR="$RELEASE_DIR/Shift-Tracker-Wear-$WEAR_VERSION_NAME.apk"
           cp "$APK" "$RELEASE_APK"
+          cp "$WEAR_APK" "$RELEASE_WEAR"
           SHA256=$(sha256sum "$RELEASE_APK" | awk '{print $1}')
+          WEAR_SHA256=$(sha256sum "$RELEASE_WEAR" | awk '{print $1}')
           jq -n \
             --arg channel "stable" \
             --arg versionName "$VERSION_NAME" \
@@ -145,8 +152,9 @@ jobs:
             --arg minimumWebVersion "$MINIMUM_WEB_VERSION" \
             --arg apkFile "Shift-Tracker-$VERSION_NAME.apk" \
             --arg sha256 "$SHA256" \
+            --arg wearName "$WEAR_VERSION_NAME" --argjson wearCode "$WEAR_VERSION_CODE" --arg wearFile "Shift-Tracker-Wear-$WEAR_VERSION_NAME.apk" --arg wearSha "$WEAR_SHA256" \
             --arg notes "$RELEASE_NOTES" \
-            '{channel:$channel,versionName:$versionName,versionCode:$versionCode,minimumWebVersion:$minimumWebVersion,apkFile:$apkFile,sha256:$sha256,releaseNotes:($notes | split("\n") | map(select(length > 0)))}' > "$RELEASE_DIR/shift-tracker-android-release.json"
+            '{channel:$channel,versionName:$versionName,versionCode:$versionCode,minimumWebVersion:$minimumWebVersion,apkFile:$apkFile,sha256:$sha256,releaseNotes:($notes | split("\n") | map(select(length > 0))),wear:{versionName:$wearName,versionCode:$wearCode,asset:$wearFile,sha256:$wearSha}}' > "$RELEASE_DIR/shift-tracker-android-release.json"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "release_dir=$RELEASE_DIR" >> "$GITHUB_OUTPUT"
@@ -199,4 +207,4 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_NOTES"
-          gh release create "v$VERSION_NAME" release-bundle/Shift-Tracker-"$VERSION_NAME".apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --title "Shift Tracker Android $VERSION_NAME" --notes "$RELEASE_NOTES" --latest
+          gh release create "v$VERSION_NAME" release-bundle/Shift-Tracker-"$VERSION_NAME".apk release-bundle/Shift-Tracker-Wear-*.apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --title "Shift Tracker Android $VERSION_NAME" --notes "$RELEASE_NOTES" --latest

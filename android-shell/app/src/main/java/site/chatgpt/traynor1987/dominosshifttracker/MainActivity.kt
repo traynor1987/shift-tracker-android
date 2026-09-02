@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var webReleaseStore: VerifiedWebReleaseStore
     private lateinit var apkUpdateManager: AndroidApkUpdateManager
+    private lateinit var wearUpdateManager: WearUpdateManager
     private val webReleaseExecutor = Executors.newSingleThreadExecutor()
     private var pendingStartDeliveryId: String? = null
     private var backgroundSettingsRequested = false
@@ -136,6 +137,7 @@ class MainActivity : ComponentActivity() {
         activeActivity = this
         webReleaseStore = VerifiedWebReleaseStore(this)
         apkUpdateManager = AndroidApkUpdateManager(this, webReleaseExecutor, ::postApkUpdate)
+        wearUpdateManager = WearUpdateManager(this, webReleaseExecutor, ::postApkUpdate)
         webView = WebView(this)
         configureWebView(webView)
         setContentView(webView)
@@ -281,6 +283,8 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_web_update:rollback" -> rollbackWebUpdate()
             "shift_tracker_apk_update:check" -> apkUpdateManager.check(message.optBoolean("manual", true), message.optString("webVersion").takeIf { it.isNotBlank() })
             "shift_tracker_apk_update:install" -> apkUpdateManager.downloadAndInstall()
+            "shift_tracker_wear_update:check" -> wearUpdateManager.check(message.optBoolean("manual", true))
+            "shift_tracker_wear_update:send" -> wearUpdateManager.send()
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
@@ -341,7 +345,7 @@ class MainActivity : ComponentActivity() {
                 put("previousWebVersion", it.previousVersion ?: JSONObject.NULL)
             }
             if (wearConnectionKnown) put("wearConnected", wearConnected)
-            put("wearVersion", BuildConfig.VERSION_NAME)
+            WearUpdateManager.version(this@MainActivity)?.let { put("wearVersion", it.first); put("wearVersionCode", it.second) }
         }.toString()
         postNativeMessage(payload)
         deliverPendingNativeAction()
@@ -356,6 +360,7 @@ class MainActivity : ComponentActivity() {
             .addOnSuccessListener { nodes ->
                 wearConnectionKnown = true
                 wearConnected = nodes.isNotEmpty()
+                if (wearConnected) WearSync.requestWearVersion(this)
                 sendShellReady(refreshWearConnection = false)
             }
             .addOnFailureListener {
