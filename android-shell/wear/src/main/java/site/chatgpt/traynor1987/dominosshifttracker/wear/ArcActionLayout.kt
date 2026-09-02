@@ -5,17 +5,81 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
-import android.view.View
 import android.view.ViewGroup
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
-/** A readable lower action tray, sized for a round watch display. */
+/** Large delivery controls arranged around the lower arc of a round watch. */
 class ArcActionLayout(context: Context) : ViewGroup(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    init { setWillNotDraw(false) }
+
+    init {
+        setWillNotDraw(false)
+    }
+
     override fun generateDefaultLayoutParams() = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
     override fun checkLayoutParams(p: LayoutParams?) = p != null
-    private fun buttonWidth(count:Int) = when (count) { 1 -> 164; 2 -> 112; else -> 82 }
-    override fun onMeasure(w:Int,h:Int){ val ww=MeasureSpec.getSize(w); val hh=MeasureSpec.getSize(h); val width=buttonWidth(childCount); for(i in 0 until childCount)getChildAt(i).measure(MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(48,MeasureSpec.EXACTLY)); setMeasuredDimension(ww,hh) }
-    override fun onDraw(canvas: Canvas) { if (childCount == 0) return; val y = height - 96f; paint.color = Color.argb(222, 18, 18, 20); canvas.drawRoundRect(RectF(15f, y - 8f, width - 15f, y + 56f), 30f, 30f, paint); paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.5f; paint.color = Color.argb(115, 36, 161, 255); canvas.drawRoundRect(RectF(15f, y - 8f, width - 15f, y + 56f), 30f, 30f, paint); paint.style = Paint.Style.FILL }
-    override fun onLayout(changed:Boolean,l:Int,t:Int,r:Int,b:Int){ val count=childCount; if(count==0)return; val width=buttonWidth(count); val gap=6; val total=count*width+(count-1)*gap; var x=(this.width-total)/2; val y=height-92; for(i in 0 until count){val v=getChildAt(i);v.layout(x,y,x+width,y+v.measuredHeight);x+=width+gap} }
+
+    private fun buttonWidth(count: Int) = when (count) {
+        1 -> 184
+        2 -> 128
+        else -> 104
+    }
+
+    private fun buttonHeight(count: Int) = if (count == 1) 64 else 60
+
+    private fun actionCenters(count: Int): List<Pair<Float, Float>> {
+        val radius = min(width, height) * .34f
+        val centerX = width / 2f
+        val centerY = height * .47f
+        val angles = when (count) {
+            1 -> listOf(90.0)
+            2 -> listOf(118.0, 62.0)
+            else -> listOf(135.0, 90.0, 45.0)
+        }
+        return angles.map { angle ->
+            val radians = Math.toRadians(angle)
+            (centerX + cos(radians).toFloat() * radius) to
+                (centerY + sin(radians).toFloat() * radius)
+        }
+    }
+
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        val measuredWidth = MeasureSpec.getSize(widthSpec)
+        val measuredHeight = MeasureSpec.getSize(heightSpec)
+        val childWidth = buttonWidth(childCount)
+        val childHeight = buttonHeight(childCount)
+        for (index in 0 until childCount) {
+            getChildAt(index).measure(
+                MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
+            )
+        }
+        setMeasuredDimension(measuredWidth, measuredHeight)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        if (childCount == 0) return
+        val radius = min(width, height) * .34f
+        val centerX = width / 2f
+        val centerY = height * .47f
+        val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f
+        paint.color = Color.argb(135, 36, 161, 255)
+        canvas.drawArc(arc, 35f, 110f, false, paint)
+        paint.style = Paint.Style.FILL
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val count = childCount
+        if (count == 0) return
+        actionCenters(count).forEachIndexed { index, (centerX, centerY) ->
+            val child = getChildAt(index)
+            val childLeft = (centerX - child.measuredWidth / 2f).toInt()
+            val childTop = (centerY - child.measuredHeight / 2f).toInt()
+            child.layout(childLeft, childTop, childLeft + child.measuredWidth, childTop + child.measuredHeight)
+        }
+    }
 }
