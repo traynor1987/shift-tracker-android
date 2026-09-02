@@ -123,8 +123,8 @@ jobs:
         id: release_assets
         shell: bash
         env:
-          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.129' }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Native Android improvements' }}
+          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.145' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Android and Wear update progress' }}
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
@@ -174,7 +174,7 @@ jobs:
 
   publish-stable-release:
     name: Publish verified public stable release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build-signed-apk
     runs-on: ubuntu-24.04
     permissions:
@@ -204,7 +204,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_NAME: ${{ needs.build-signed-apk.outputs.version_name }}
-          RELEASE_NOTES: ${{ inputs.release_notes }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Android and Wear update progress' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_NOTES"
