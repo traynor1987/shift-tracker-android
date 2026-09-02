@@ -3,6 +3,7 @@
     <uses-feature android:name="android.hardware.type.watch" android:required="true" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application android:allowBackup="false" android:icon="@drawable/ic_shift_tracker" android:label="Shift Tracker" android:theme="@style/Theme.ShiftTrackerWear">
         <activity android:name=".WearMainActivity" android:exported="true">
             <intent-filter>
