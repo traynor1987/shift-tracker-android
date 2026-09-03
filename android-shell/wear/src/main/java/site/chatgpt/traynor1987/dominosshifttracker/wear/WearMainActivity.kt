@@ -25,8 +25,31 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
         fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false}
         panel.addView(ImageView(this).apply{setImageResource(site.chatgpt.traynor1987.dominosshifttracker.wear.R.drawable.ic_shift_tracker);contentDescription="Shift Tracker"},LinearLayout.LayoutParams(23,23).apply{bottomMargin=2})
         panel.addView(tx(11f,Color.rgb(35,161,255)).apply{text="SHIFT TRACKER"});state=tx(19f,Color.WHITE);panel.addView(state);timer=Chronometer(this).apply{textSize=37f;setTextColor(Color.WHITE);gravity=Gravity.CENTER};panel.addView(timer);detail=tx(12f,Color.rgb(222,218,210));panel.addView(detail);main.addView(panel,FrameLayout.LayoutParams(-1,-1));actions=ArcActionLayout(this);main.addView(actions,FrameLayout.LayoutParams(-1,-1));
-        val gestures=GestureDetector(this,object:GestureDetector.SimpleOnGestureListener(){override fun onDown(e:MotionEvent)=true;override fun onFling(a:MotionEvent,b:MotionEvent,dx:Float,dy:Float):Boolean{if(kotlin.math.abs(dx)>90&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.3f){if(dx>0)showInfo()else showMain();return true};return false}});root.setOnTouchListener{_,e->gestures.onTouchEvent(e)};setContentView(root)}
-    private fun showInfo(){if(showingInfo)return;showingInfo=true;timer.stop();root.removeAllViews();val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(34,42,34,34)};fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false};val s=WearState.read(this);val connected=s!=null&&!s.disconnected;panel.addView(tx(12f,Color.rgb(35,161,255)).apply{text="SHIFT TRACKER"});panel.addView(tx(21f,Color.WHITE).apply{text="PHONE ${if(connected)"CONNECTED" else "NOT CONNECTED"}"});panel.addView(tx(12f,if(connected)Color.rgb(70,205,170) else Color.rgb(239,105,90)).apply{text=if(connected)"● Live shift data available" else "● Open phone app to reconnect"},LinearLayout.LayoutParams(-1,-2).apply{topMargin=8;bottomMargin=26});panel.addView(settingsButton(),LinearLayout.LayoutParams(-1,48));val version=packageManager.getPackageInfo(packageName,0).versionName?:"";panel.addView(tx(12f,Color.rgb(222,218,210)).apply{text="ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"},LinearLayout.LayoutParams(-1,-2).apply{topMargin=22});root.addView(panel,FrameLayout.LayoutParams(-1,-1))}
+        val gestures=GestureDetector(this,object:GestureDetector.SimpleOnGestureListener(){
+            override fun onDown(e:MotionEvent)=true
+            override fun onFling(first:MotionEvent?,last:MotionEvent?,velocityX:Float,velocityY:Float):Boolean{
+                if(first==null||last==null)return false
+                val horizontal=last.x-first.x; val vertical=last.y-first.y
+                if(kotlin.math.abs(horizontal)>90&&kotlin.math.abs(horizontal)>kotlin.math.abs(vertical)*1.3f){if(horizontal>0)showInfo()else showMain();return true}
+                return false
+            }
+        });root.setOnTouchListener{_,e->gestures.onTouchEvent(e)};setContentView(root)}
+    private fun showInfo(){
+        if(showingInfo)return
+        showingInfo=true;timer.stop();root.removeAllViews()
+        val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(34,42,34,34)}
+        fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false}
+        val connected=WearState.read(this)?.disconnected==false
+        val status=if(connected)"PHONE CONNECTED" else "PHONE NOT CONNECTED"
+        val hint=if(connected)"● Live shift data available" else "● Open phone app to reconnect"
+        panel.addView(tx(12f,Color.rgb(35,161,255)).apply{text="SHIFT TRACKER"})
+        panel.addView(tx(21f,Color.WHITE).apply{text=status})
+        panel.addView(tx(12f,if(connected)Color.rgb(70,205,170) else Color.rgb(239,105,90)).apply{text=hint},LinearLayout.LayoutParams(-1,-2).apply{topMargin=8;bottomMargin=26})
+        panel.addView(settingsButton(),LinearLayout.LayoutParams(-1,48))
+        val version=packageManager.getPackageInfo(packageName,0).versionName?:""
+        panel.addView(tx(12f,Color.rgb(222,218,210)).apply{text="ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"},LinearLayout.LayoutParams(-1,-2).apply{topMargin=22})
+        root.addView(panel,FrameLayout.LayoutParams(-1,-1))
+    }
     private fun showMain(){if(!showingInfo)return;showingInfo=false;root.removeAllViews();root.addView(main);render()}
     private fun settingsButton()=Button(this).apply{text="APP SETTINGS";textSize=13f;isAllCaps=false;setTextColor(Color.WHITE);background=GradientDrawable().apply{cornerRadius=38f;setColor(Color.rgb(8,117,209));setStroke(2,Color.rgb(120,190,255))};setOnClickListener{startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))}}
     private fun render(){if(showingInfo){showInfo();return};val s=WearState.read(this);actions.removeAllViews();if(s==null||s.disconnected){dial.accent=Color.rgb(224,163,56);dial.progress=.15f;state.text="PHONE DISCONNECTED";timer.stop();timer.text="LAST STATE";detail.text="Open phone to reconnect";return};if(!s.active){dial.accent=Color.rgb(8,117,209);dial.progress=.22f;state.text="CLOCKED OUT";timer.stop();timer.text="OFF";detail.text="Open phone to start a shift";actions.addView(openPhoneButton());actions.requestLayout();return}
