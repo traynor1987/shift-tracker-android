@@ -25,15 +25,14 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
         fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false}
         panel.addView(ImageView(this).apply{setImageResource(site.chatgpt.traynor1987.dominosshifttracker.wear.R.drawable.ic_shift_tracker);contentDescription="Shift Tracker"},LinearLayout.LayoutParams(23,23).apply{bottomMargin=2})
         panel.addView(tx(11f,Color.rgb(35,161,255)).apply{text="SHIFT TRACKER"});state=tx(19f,Color.WHITE);panel.addView(state);timer=Chronometer(this).apply{textSize=37f;setTextColor(Color.WHITE);gravity=Gravity.CENTER};panel.addView(timer);detail=tx(12f,Color.rgb(222,218,210));panel.addView(detail);main.addView(panel,FrameLayout.LayoutParams(-1,-1));actions=ArcActionLayout(this);main.addView(actions,FrameLayout.LayoutParams(-1,-1));
-        val gestures=GestureDetector(this,object:GestureDetector.SimpleOnGestureListener(){
-            override fun onDown(e:MotionEvent)=true
-            override fun onFling(first:MotionEvent?,last:MotionEvent?,velocityX:Float,velocityY:Float):Boolean{
-                if(first==null||last==null)return false
-                val horizontal=last.x-first.x; val vertical=last.y-first.y
-                if(kotlin.math.abs(horizontal)>90&&kotlin.math.abs(horizontal)>kotlin.math.abs(vertical)*1.3f){if(horizontal>0)showInfo()else showMain();return true}
-                return false
+        var touchX=0f;var touchY=0f
+        root.setOnTouchListener{_,e->
+            when(e.actionMasked){
+                MotionEvent.ACTION_DOWN->{touchX=e.x;touchY=e.y}
+                MotionEvent.ACTION_UP->{val horizontal=e.x-touchX;val vertical=e.y-touchY;if(kotlin.math.abs(horizontal)>90&&kotlin.math.abs(horizontal)>kotlin.math.abs(vertical)*1.3f){if(horizontal>0)showInfo()else showMain()}}
             }
-        });root.setOnTouchListener{_,e->gestures.onTouchEvent(e)};setContentView(root)}
+            false
+        };setContentView(root)}
     private fun showInfo(){
         if(showingInfo)return
         showingInfo=true;timer.stop();root.removeAllViews()
