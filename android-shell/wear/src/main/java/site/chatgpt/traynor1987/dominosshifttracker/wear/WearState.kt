@@ -13,7 +13,7 @@ data class WearSnapshot(val stateRevision: Long, val shiftId: String, val activi
 }
 
 object WearState {
-    const val STATE_PATH = "/shift-tracker/state"; const val ACTION_PATH = "/shift-tracker/action"; const val REQUEST_PATH = "/shift-tracker/request-state"; const val RESULT_PATH = "/shift-tracker/action-result"
+    const val STATE_PATH = "/shift-tracker/state"; const val ACTION_PATH = "/shift-tracker/action"; const val REQUEST_PATH = "/shift-tracker/request-state"; const val RESULT_PATH = "/shift-tracker/action-result"; const val OPEN_PHONE_PATH = "/shift-tracker/open-phone"
     private const val PREFS = "shift_tracker_wear_mirror_v1"; private const val KEY = "snapshot"
     fun read(context: Context): WearSnapshot? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)?.let { parse(it) }
     fun save(context: Context, raw: String) { if (parse(raw) != null) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply() }
@@ -55,6 +55,8 @@ class WearStateListenerService : WearableListenerService() {
 }
 
 object WearTransport {
+    /** Opens the paired phone app only; no delivery or shift action is sent. */
+    fun openPhone(context: Context) { Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WearState.OPEN_PHONE_PATH, byteArrayOf()) } } }
     fun sendAction(context: Context, action: String) {
         val state = WearState.read(context) ?: return
         val payload = JSONObject()

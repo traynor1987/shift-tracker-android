@@ -17,6 +17,8 @@ object WearSync {
     const val ACTION_PATH = "/shift-tracker/action"
     const val REQUEST_PATH = "/shift-tracker/request-state"
     const val RESULT_PATH = "/shift-tracker/action-result"
+    /** A navigation-only request from the watch. It never creates or alters a shift. */
+    const val OPEN_PHONE_PATH = "/shift-tracker/open-phone"
     const val WEAR_VERSION_PATH = WearUpdateManager.VERSION
     private const val KEY_JSON = "snapshot"
 
@@ -84,6 +86,9 @@ class PhoneWearListenerService : WearableListenerService() {
     override fun onMessageReceived(event: MessageEvent) {
         when (event.path) {
             WearSync.REQUEST_PATH -> WearSync.publish(this)
+            WearSync.OPEN_PHONE_PATH -> startActivity(Intent(this, MainActivity::class.java)
+                .setAction(Intent.ACTION_VIEW)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
             WearSync.ACTION_PATH -> {
                 val raw = event.data.toString(Charsets.UTF_8)
                 val request = runCatching { JSONObject(raw) }.getOrElse {
