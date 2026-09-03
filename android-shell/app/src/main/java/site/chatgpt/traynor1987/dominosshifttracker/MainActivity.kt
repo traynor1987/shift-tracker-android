@@ -478,3 +478,485 @@ class MainActivity : ComponentActivity() {
                     .put("updateAvailable", check.updateAvailable).put("apkVersion", BuildConfig.VERSION_NAME))
             }.onFailure { error -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:failed").put("message", error.message ?: "Could not check for a Web Update")) }
         }
+    }
+
+    private fun installWebUpdate() {
+        webReleaseExecutor.execute {
+            val result = webReleaseStore.install { progress -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:progress").put("phase", progress.phase).put("completed", progress.completed).put("total", progress.total)) }
+            when (result) {
+                is VerifiedWebReleaseStore.InstallResult.Success -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:installed").put("webVersion", result.version).put("apkVersion", BuildConfig.VERSION_NAME))
+                is VerifiedWebReleaseStore.InstallResult.Failure -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:failed").put("message", result.message))
+            }
+        }
+    }
+
+    private fun rollbackWebUpdate() {
+        val rollback = webReleaseStore.rollback()
+        postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:rollback_result").put("webVersion", rollback?.version ?: JSONObject.NULL))
+        if (rollback != null) runOnUiThread(::loadTracker)
+    }
+
+    /**
+     * One user-triggered foreground reading for the optional store-start proof.
+     * It is intentionally not connected to DeliveryLocationService, geofence
+     * evaluation, persisted samples, or any delivery start/return behaviour.
+     */
+    private fun requestStoreProofLocation(rawRequestId: String?) {
+        val requestId = rawRequestId?.trim()
+        if (requestId.isNullOrEmpty() || requestId.length > 128) return
+        if (!hasPreciseLocationPermission()) {
+            sendStoreProofLocationResult(requestId, "permission_required", null, "Allow Precise location for Shift Tracker, then try again")
+            return
+        }
+        if (!isLocationProviderEnabled()) {
+            sendStoreProofLocationResult(requestId, "unavailable", null, "Turn on phone location, then try again")
+            return
+        }
+        LocationServices.getFusedLocationProviderClient(this)
+            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                val valid = location != null && location.latitude.isFinite() && location.longitude.isFinite() && location.accuracy.isFinite() && location.accuracy >= 0f && location.time > 0L
+                if (valid) sendStoreProofLocationResult(requestId, "ok", location, null)
+                else sendStoreProofLocationResult(requestId, "unavailable", null, "Android could not obtain a current GPS fix")
+            }
+            .addOnFailureListener {
+                sendStoreProofLocationResult(requestId, "unavailable", null, "Android could not obtain a current GPS fix")
+            }
+    }
+
+    private fun sendStoreProofLocationResult(requestId: String, status: String, location: Location?, message: String?) {
+        postNativeMessage(JSONObject()
+            .put("type", "shift_tracker_store_proof:result")
+            .put("requestId", requestId)
+            .put("status", status)
+            .apply {
+                if (location != null) {
+                    put("latitude", location.latitude)
+                    put("longitude", location.longitude)
+                    put("accuracy", location.accuracy.toDouble())
+                    put("timestampEpochMs", location.time)
+                }
+                if (!message.isNullOrBlank()) put("message", message)
+            }
+            .toString())
+    }
+
+    private fun requestNativeLocationStart(rawDeliveryId: String?) {
+        val deliveryId = rawDeliveryId?.trim()
+        if (deliveryId.isNullOrEmpty() || deliveryId.length > 128) {
+            sendNativeState("error", null, "A valid delivery session was not supplied")
+            return
+        }
+        pendingStartDeliveryId = deliveryId
+        if (!hasPreciseLocationPermission()) {
+            requestPermissions(requiredRuntimePermissions().toTypedArray(), LOCATION_PERMISSION_REQUEST)
+            sendNativeState("permission_required", deliveryId, "Allow Precise location first. Android asks for foreground location before any background-location option")
+            return
+        }
+        if (!hasNotificationPermission()) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+            sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification")
+            return
+        }
+        startNativeLocationService(deliveryId)
+    }
+
+    private fun startNativeLocationService(deliveryId: String) {
+        pendingStartDeliveryId = null
+        val intent = Intent(this, DeliveryLocationService::class.java)
+            .setAction(DeliveryLocationService.ACTION_START)
+            .putExtra(DeliveryLocationService.EXTRA_DELIVERY_ID, deliveryId)
+        sendNativeState("service_starting", deliveryId, "Native delivery GPS start requested; waiting for the foreground service")
+        runCatching { startForegroundService(this, intent) }
+            .onFailure { sendNativeState("service_not_started", deliveryId, "Android rejected the delivery GPS service start") }
+    }
+
+    private fun stopNativeLocation(@Suppress("UNUSED_PARAMETER") requestedDeliveryId: String?) {
+        pendingStartDeliveryId = null
+        val intent = Intent(this, DeliveryLocationService::class.java).setAction(DeliveryLocationService.ACTION_STOP)
+        // Always enqueue the stop command, even if the start request has not
+        // completed its asynchronous provider callback yet. Android orders
+        // service commands, so a fast Back at Store cannot leave a late start
+        // running in the background.
+        runCatching { startService(intent) }
+            .onFailure { sendNativeState("error", null, "Android could not stop the delivery GPS service") }
+    }
+
+    private fun sendNativeState(status: String, deliveryId: String?, message: String?) {
+        val diagnostics = nativeDiagnostics().put("diagnostic", diagnosticForStatus(status))
+        val payload = JSONObject()
+            .put("type", "shift_tracker_location:state")
+            .put("status", status)
+            .put("diagnostic", diagnosticForStatus(status))
+            .put("diagnostics", diagnostics)
+            .apply { if (!deliveryId.isNullOrBlank()) put("deliveryId", deliveryId) }
+            .apply { if (!message.isNullOrBlank()) put("message", message) }
+            .toString()
+        postNativeMessage(payload)
+    }
+
+    /** Foreground permission only. Background location is deliberately staged later. */
+    private fun requiredRuntimePermissions(): List<String> = listOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+    )
+
+    private fun hasPermission(permission: String) = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasPreciseLocationPermission() = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) && hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+    private fun hasBackgroundLocationPermission() = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+    private fun hasNotificationPermission() = Build.VERSION.SDK_INT < 33 || hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+
+    private fun requestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasBackgroundLocationPermission()) {
+            sendNativeState("background_permission_granted", DeliveryLocationService.activeDeliveryId(this), "${backgroundPermissionLabel()} is already available")
+            sendShellReady()
+            return
+        }
+        val deliveryId = DeliveryLocationService.activeDeliveryId(this)
+        if (!hasPreciseLocationPermission()) {
+            // Background permission is never requested in the same call as
+            // foreground location. Complete the foreground stage first, then
+            // continue this request from its callback.
+            pendingBackgroundPermissionRequest = true
+            pendingBackgroundDeliveryId = deliveryId
+            sendNativeState("permission_required", deliveryId, "Grant Precise foreground location first; Android requires a separate background-location stage")
+            requestPermissions(requiredRuntimePermissions().toTypedArray(), LOCATION_PERMISSION_REQUEST)
+            return
+        }
+        requestBackgroundPermissionStage(deliveryId)
+    }
+
+    private fun requestBackgroundPermissionStage(deliveryId: String?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasBackgroundLocationPermission()) {
+            sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is already available")
+            sendShellReady()
+            return
+        }
+        // This is deliberately a second stage after precise foreground
+        // permission. Android 11+ exposes Allow all the time only in App info;
+        // requesting it again at runtime creates a misleading dead end on many
+        // Samsung builds, so take the user directly to the correct app screen.
+        sendNativeState(
+            "background_permission_required",
+            deliveryId,
+            "Precise foreground location is granted. Android will now guide you to App info → Permissions → Location → ${backgroundPermissionLabel()}. Tracking remains limited to an active delivery.",
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) openBackgroundPermissionSettings(deliveryId)
+        else runCatching {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), BACKGROUND_LOCATION_PERMISSION_REQUEST)
+        }.onFailure { openBackgroundPermissionSettings(deliveryId) }
+    }
+
+    private fun requestNativeFileSave(message: JSONObject) {
+        val requestId = message.optString("requestId").trim()
+        val filename = message.optString("filename").trim()
+        val mimeType = message.optString("mimeType").trim().substringBefore(';').lowercase()
+        val content = message.optString("content", null)
+        val safeName = filename.length in 1..120 && filename == File(filename).name &&
+            filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
+        val allowedType = (mimeType == "application/json" && filename.endsWith(".json", true)) ||
+            (mimeType == "text/csv" && filename.endsWith(".csv", true))
+        if (requestId.isEmpty() || requestId.length > 128 || !safeName || !allowedType || content == null || content.length > MAX_EXPORTED_FILE_CHARS) {
+            if (requestId.isNotEmpty() && requestId.length <= 128) sendFileSaveResult(requestId, "error", "The requested export was not an allowed JSON or CSV file")
+            return
+        }
+        if (pendingFileSave != null) {
+            sendFileSaveResult(requestId, "error", "Finish the current file save first")
+            return
+        }
+        pendingFileSave = PendingFileSave(requestId, filename, mimeType, content)
+        runCatching {
+            createDocumentLauncher.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = mimeType
+                putExtra(Intent.EXTRA_TITLE, filename)
+            })
+        }.onFailure {
+            pendingFileSave = null
+            sendFileSaveResult(requestId, "error", "Android could not open the document picker")
+        }
+    }
+
+    private fun requestNativeShare(message: JSONObject) {
+        val requestId = message.optString("requestId").trim()
+        val filename = message.optString("filename").trim()
+        val mimeType = message.optString("mimeType").trim().substringBefore(';').lowercase()
+        val safeName = filename.length in 1..120 && filename == File(filename).name && filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
+        val allowed = mimeType in setOf("application/pdf", "application/json", "text/csv", "text/plain", "image/jpeg", "image/png")
+        if (requestId.isEmpty() || requestId.length > 128 || !safeName || !allowed) return
+        val bytes = when {
+            message.has("base64") -> runCatching { Base64.getDecoder().decode(message.optString("base64")) }.getOrNull()
+            message.has("content") -> message.optString("content").toByteArray(StandardCharsets.UTF_8)
+            else -> null
+        } ?: return
+        if (bytes.isEmpty() || bytes.size > MAX_SHARED_FILE_BYTES) return
+        runCatching {
+            val directory = File(cacheDir, "shared-exports").apply { mkdirs() }
+            directory.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 60 * 60_000L }?.forEach(File::delete)
+            val output = File(directory, filename).apply { writeBytes(bytes) }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = ClipData.newRawUri("Shift Tracker export", uri)
+            }, "Share with"))
+            postNativeMessage(JSONObject().put("type", "shift_tracker_file:share_result").put("requestId", requestId).put("status", "opened").toString())
+        }.onFailure {
+            postNativeMessage(JSONObject().put("type", "shift_tracker_file:share_result").put("requestId", requestId).put("status", "error").toString())
+        }
+    }
+
+    private fun sendFileSaveResult(requestId: String, status: String, message: String) {
+        postNativeMessage(JSONObject()
+            .put("type", "shift_tracker_file:save_result")
+            .put("requestId", requestId)
+            .put("status", status)
+            .put("message", message)
+            .toString())
+    }
+
+    private fun openBackgroundPermissionSettings(deliveryId: String?) {
+        if (hasBackgroundLocationPermission()) {
+            sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled")
+            sendShellReady()
+            return
+        }
+        backgroundSettingsRequested = true
+        sendNativeState(
+            "background_settings_opened",
+            deliveryId,
+            "Android requires this second stage in App info. Open Permissions → Location and choose ${backgroundPermissionLabel()}; return to Shift Tracker when finished.",
+        )
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        }.onFailure {
+            backgroundSettingsRequested = false
+            sendNativeState("background_permission_required", deliveryId, "Android could not open Shift Tracker App info; open App info → Permissions → Location manually")
+        }
+    }
+
+    private fun backgroundPermissionLabel(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        packageManager.getBackgroundPermissionOptionLabel().toString()
+    } else "Allow all the time"
+
+    private fun isLocationProviderEnabled(): Boolean = runCatching {
+        val manager = getSystemService(android.location.LocationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) manager.isLocationEnabled
+        else manager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+    }.getOrDefault(false)
+
+    private fun nativeDiagnostics(): JSONObject = JSONObject()
+        .put("diagnostic", currentDiagnosticCode())
+        .put("foregroundLocation", when {
+            hasPreciseLocationPermission() -> "precise"
+            hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) -> "approximate"
+            else -> "missing"
+        })
+        .put("backgroundLocationGranted", hasBackgroundLocationPermission())
+        .put("notificationsGranted", hasNotificationPermission())
+        .put("locationProviderEnabled", isLocationProviderEnabled())
+        .put("serviceRunning", DeliveryLocationService.isRunning())
+        .put("lastSampleReceivedAt", DeliveryLocationService.lastSampleReceivedAt() ?: JSONObject.NULL)
+        .put("backgroundPermissionLabel", backgroundPermissionLabel())
+        .apply {
+            val pipeline = DeliveryLocationService.pipelineDiagnostics()
+            pipeline.keys().forEach { key -> put(key, pipeline.get(key)) }
+        }
+
+    private fun currentDiagnosticCode(): String {
+        val serviceCode = DeliveryLocationService.diagnosticCode()
+        if (serviceCode != "STOPPED" && serviceCode != "SERVICE_NOT_STARTED") return serviceCode
+        if (!hasPreciseLocationPermission() || !hasNotificationPermission()) return "PERMISSION_MISSING"
+        if (!isLocationProviderEnabled()) return "LOCATION_PROVIDER_DISABLED"
+        return if (hasBackgroundLocationPermission()) "BACKGROUND_PERMISSION_GRANTED" else "FOREGROUND_PERMISSION_GRANTED"
+    }
+
+    private fun diagnosticForStatus(status: String): String = when (status) {
+        "permission_required" -> "PERMISSION_MISSING"
+        "foreground_permission_granted" -> "FOREGROUND_PERMISSION_GRANTED"
+        "location_provider_disabled" -> "LOCATION_PROVIDER_DISABLED"
+        "waiting_for_fix", "active" -> "WAITING_FOR_FIX"
+        "sample_received" -> "SAMPLE_RECEIVED"
+        "service_started" -> "SERVICE_ACTIVE"
+        "background_permission_granted" -> "BACKGROUND_PERMISSION_GRANTED"
+        "stopped" -> "STOPPED"
+        "background_permission_required", "background_settings_opened" -> "BACKGROUND_PERMISSION_MISSING"
+        else -> "SERVICE_NOT_STARTED"
+    }
+
+    private fun continuePendingNativeStart() {
+        val deliveryId = pendingStartDeliveryId ?: return
+        if (!hasPreciseLocationPermission()) {
+            pendingStartDeliveryId = null
+            sendNativeState("permission_required", deliveryId, "Precise location is required for native delivery GPS")
+        } else {
+            sendNativeState("foreground_permission_granted", deliveryId, "Precise foreground location granted; continuing the active-delivery startup")
+            if (!hasNotificationPermission()) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+                sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification")
+            } else startNativeLocationService(deliveryId)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            LOCATION_PERMISSION_REQUEST -> {
+                if (pendingBackgroundPermissionRequest) {
+                    pendingBackgroundPermissionRequest = false
+                    val deliveryId = pendingBackgroundDeliveryId
+                    pendingBackgroundDeliveryId = null
+                    if (hasPreciseLocationPermission()) {
+                        sendNativeState("foreground_permission_granted", deliveryId, "Precise foreground location granted; requesting background location separately")
+                        requestBackgroundPermissionStage(deliveryId)
+                    } else {
+                        sendNativeState("permission_required", deliveryId, "Precise foreground location is still required before background location can be requested")
+                    }
+                } else continuePendingNativeStart()
+            }
+            NOTIFICATION_PERMISSION_REQUEST -> {
+                if (hasNotificationPermission()) continuePendingNativeStart()
+                else {
+                    val deliveryId = pendingStartDeliveryId
+                    pendingStartDeliveryId = null
+                    sendNativeState("permission_required", deliveryId, "Allow notifications so Android can show the persistent delivery GPS notification, then start the delivery again")
+                }
+            }
+            BACKGROUND_LOCATION_PERMISSION_REQUEST -> {
+                val deliveryId = DeliveryLocationService.activeDeliveryId(this)
+                if (hasBackgroundLocationPermission()) sendNativeState("background_permission_granted", deliveryId, "${backgroundPermissionLabel()} is enabled")
+                else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) openBackgroundPermissionSettings(deliveryId)
+                else {
+                    sendNativeState("background_permission_required", deliveryId, "Background location remains off; enable ${backgroundPermissionLabel()} from App permissions → Location if required")
+                    sendShellReady()
+                }
+            }
+            ROTA_NOTIFICATION_PERMISSION_REQUEST -> {
+                postNativeMessage(JSONObject().put("type", "shift_tracker_rota:permission").put("granted", hasNotificationPermission()).toString())
+                if (hasNotificationPermission()) RotaReminderScheduler.scheduleStored(this)
+            }
+            WORK_NOTIFICATION_PERMISSION_REQUEST -> {
+                if (hasNotificationPermission()) showPendingWorkNotification() else pendingWorkNotification = null
+            }
+            SHIFT_NOTIFICATION_PERMISSION_REQUEST -> if (hasNotificationPermission()) NativeShiftState.read(this)?.let { if (it.shiftActive && it.settings.liveNotification) TrackerNotifications.showLiveShift(this, it) }
+        }
+    }
+
+    private fun isTrustedUri(uri: Uri): Boolean =
+        uri.scheme == "https" && uri.host == TRUSTED_HOST && uri.port == -1
+
+    private inner class TrustedOriginClient : WebViewClient() {
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            recreateWebViewAfterRendererExit(view)
+            return true
+        }
+
+        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+            trustedReplyProxy = null
+            expectedLocalReleaseHello = webReleaseStore.installed()?.version
+            super.onPageStarted(view, url, favicon)
+        }
+
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+            if (!request.isForMainFrame) return false
+            if (isTrustedUri(request.url)) return false
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, request.url)) }
+            return true
+        }
+
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): android.webkit.WebResourceResponse? {
+            val uri = request.url
+            if (request.method == "GET" && isTrustedUri(uri)) webReleaseStore.localResponse(uri.path ?: "/") ?.let { return it }
+            return super.shouldInterceptRequest(view, request)
+        }
+
+        override fun onPageFinished(view: WebView, url: String) {
+            super.onPageFinished(view, url)
+            if (isTrustedUri(Uri.parse(url))) {
+                val expected = expectedLocalReleaseHello
+                if (expected != null) view.postDelayed({
+                    if (expectedLocalReleaseHello == expected && !localReleaseFallbackAttempted) {
+                        webReleaseStore.rollback()?.let {
+                            localReleaseFallbackAttempted = true
+                            expectedLocalReleaseHello = null
+                            loadTracker()
+                        }
+                    }
+                }, 8_000L)
+                sendShellReady(); deliverPendingNativeAction()
+            }
+        }
+    }
+
+    private inner class TrustedFileChooser : WebChromeClient() {
+        override fun onShowFileChooser(
+            webView: WebView,
+            filePathCallback: ValueCallback<Array<Uri>>,
+            fileChooserParams: FileChooserParams,
+        ): Boolean {
+            if (!isTrustedUri(Uri.parse(webView.url ?: ""))) return false
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = filePathCallback
+            cameraCaptureFile?.delete()
+            cameraCaptureFile = null
+            cameraCaptureUri = null
+
+            val acceptTypes = fileChooserParams.acceptTypes.map { it.substringBefore(';').trim().lowercase() }.filter { it.isNotEmpty() }
+            val imageRequest = acceptTypes.isEmpty() || acceptTypes.any { it == "image/*" || it.startsWith("image/") }
+            if (imageRequest && fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                return runCatching {
+                    multiplePhotoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }.fold(onSuccess = { true }, onFailure = { fileChooserCallback?.onReceiveValue(null); fileChooserCallback = null; false })
+            }
+            val openIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                type = when {
+                    acceptTypes.isEmpty() -> "*/*"
+                    acceptTypes.size == 1 -> acceptTypes.first()
+                    else -> "*/*"
+                }
+                if (acceptTypes.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+            }
+            val cameraIntent = if (imageRequest) createCameraIntent() else null
+            val launchIntent = if (fileChooserParams.isCaptureEnabled && cameraIntent != null) cameraIntent else Intent(Intent.ACTION_CHOOSER).apply {
+                putExtra(Intent.EXTRA_INTENT, openIntent)
+                putExtra(Intent.EXTRA_TITLE, if (imageRequest) "Take or choose a photo" else "Choose a file")
+                if (cameraIntent != null) putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+            }
+            return runCatching { fileChooserLauncher.launch(launchIntent) }.fold(
+                onSuccess = { true },
+                onFailure = {
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = null
+                    cameraCaptureFile?.delete()
+                    cameraCaptureFile = null
+                    cameraCaptureUri = null
+                    false
+                },
+            )
+        }
+
+        private fun createCameraIntent(): Intent? {
+            val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            if (cameraIntent.resolveActivity(packageManager) == null) return null
+            val directory = File(cacheDir, "shift-tracker-camera").apply { mkdirs() }
+            val output = File.createTempFile("delivery-photo-", ".jpg", directory)
+            val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", output)
+            cameraCaptureFile = output
+            cameraCaptureUri = uri
+            return cameraIntent.apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                clipData = ClipData.newRawUri("Shift Tracker photo", uri)
+            }
+        }
+    }
+}
