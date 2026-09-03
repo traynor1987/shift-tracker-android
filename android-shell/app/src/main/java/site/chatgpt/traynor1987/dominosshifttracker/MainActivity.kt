@@ -484,7 +484,18 @@ class MainActivity : ComponentActivity() {
         webReleaseExecutor.execute {
             val result = webReleaseStore.install { progress -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:progress").put("phase", progress.phase).put("completed", progress.completed).put("total", progress.total)) }
             when (result) {
-                is VerifiedWebReleaseStore.InstallResult.Success -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:installed").put("webVersion", result.version).put("apkVersion", BuildConfig.VERSION_NAME))
+                is VerifiedWebReleaseStore.InstallResult.Success -> {
+                    postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:installed").put("webVersion", result.version).put("apkVersion", BuildConfig.VERSION_NAME))
+                    // The verified files are now active, but the current
+                    // WebView still runs the old JavaScript bundle. Reload
+                    // only after the success message has had a chance to
+                    // render, so the driver sees a clear completion state and
+                    // the next document request is served from the new local
+                    // release rather than appearing to do nothing.
+                    runOnUiThread {
+                        if (!isDestroyed) webView.postDelayed(::loadTracker, 700L)
+                    }
+                }
                 is VerifiedWebReleaseStore.InstallResult.Failure -> postWebUpdate(JSONObject().put("type", "shift_tracker_web_update:failed").put("message", result.message))
             }
         }
