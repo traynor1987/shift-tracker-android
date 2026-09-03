@@ -16,6 +16,7 @@ import com.google.android.gms.wearable.*
 class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
     private lateinit var root:FrameLayout; private lateinit var main:FrameLayout; private lateinit var dial:WearDialView; private lateinit var state:TextView; private lateinit var timer:Chronometer; private lateinit var detail:TextView; private lateinit var actions:ArcActionLayout
     private var showingInfo=false
+    private var swipeStartX=0f; private var swipeStartY=0f
     private val handler=Handler(Looper.getMainLooper())
     override fun onCreate(b:Bundle?){super.onCreate(b); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),226); build(); request(); render()}
     override fun onResume(){super.onResume();Wearable.getDataClient(this).addListener(this);if(hasReadyWearUpdate(this))startActivity(Intent(this,WearUpdateActivity::class.java));request();render()}
@@ -25,14 +26,20 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener {
         fun tx(sz:Float,c:Int)=TextView(this).apply{textSize=sz;setTextColor(c);gravity=Gravity.CENTER;includeFontPadding=false}
         panel.addView(ImageView(this).apply{setImageResource(site.chatgpt.traynor1987.dominosshifttracker.wear.R.drawable.ic_shift_tracker);contentDescription="Shift Tracker"},LinearLayout.LayoutParams(23,23).apply{bottomMargin=2})
         panel.addView(tx(11f,Color.rgb(35,161,255)).apply{text="SHIFT TRACKER"});state=tx(19f,Color.WHITE);panel.addView(state);timer=Chronometer(this).apply{textSize=37f;setTextColor(Color.WHITE);gravity=Gravity.CENTER};panel.addView(timer);detail=tx(12f,Color.rgb(222,218,210));panel.addView(detail);main.addView(panel,FrameLayout.LayoutParams(-1,-1));actions=ArcActionLayout(this);main.addView(actions,FrameLayout.LayoutParams(-1,-1));
-        var touchX=0f;var touchY=0f
-        root.setOnTouchListener{_,e->
-            when(e.actionMasked){
-                MotionEvent.ACTION_DOWN->{touchX=e.x;touchY=e.y}
-                MotionEvent.ACTION_UP->{val horizontal=e.x-touchX;val vertical=e.y-touchY;if(kotlin.math.abs(horizontal)>90&&kotlin.math.abs(horizontal)>kotlin.math.abs(vertical)*1.3f){if(horizontal>0)showInfo()else showMain()}}
+        setContentView(root)}
+    override fun dispatchTouchEvent(event:MotionEvent):Boolean{
+        when(event.actionMasked){
+            MotionEvent.ACTION_DOWN->{swipeStartX=event.x;swipeStartY=event.y}
+            MotionEvent.ACTION_UP->{
+                val horizontal=event.x-swipeStartX;val vertical=event.y-swipeStartY
+                if(kotlin.math.abs(horizontal)>70&&kotlin.math.abs(horizontal)>kotlin.math.abs(vertical)*1.2f){
+                    if(horizontal>0)showInfo()else showMain()
+                    return true
+                }
             }
-            false
-        };setContentView(root)}
+        }
+        return super.dispatchTouchEvent(event)
+    }
     private fun showInfo(){
         if(showingInfo)return
         showingInfo=true;timer.stop();root.removeAllViews()
