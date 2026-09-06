@@ -98,9 +98,7 @@ object NativeShiftState {
             .put("expectedStateRevision", snapshot.stateRevision)
             .put("expectedShiftId", snapshot.shiftId)
             .put("expectedActivityId", snapshot.activityId)
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_PENDING_ACTION, payload.toString())
-            .putString("wear_reply_" + id, payload.toString()).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
         return true
     }
 
