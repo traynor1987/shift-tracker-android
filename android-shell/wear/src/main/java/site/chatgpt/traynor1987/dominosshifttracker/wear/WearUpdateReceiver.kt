@@ -137,7 +137,9 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
                         if (percent != reported) {
                             reported = percent
                             WearUpdateUi.save(this, "receiving", percent)
-                            runCatching { NotificationManagerCompat.from(this).notify(RECEIVING_NOTIFICATION, receivingNotification(percent)) }
+                            if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                                runCatching { NotificationManagerCompat.from(this).notify(RECEIVING_NOTIFICATION, receivingNotification(percent)) }
+                            }
                         }
                     }
                     output.fd.sync()
