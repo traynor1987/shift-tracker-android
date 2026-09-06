@@ -1,3 +1,11 @@
+# Wear 2.2.52 — break target, watch status and shift goals
+
+Adds configurable break countdown (default 30 min), one vibration per break/target, optional precise alarm access with inexact fallback, cancellation on canonical break end, and alarm identity/late/duplicate checks. Break completion is always manual. A disconnected watch cannot know about an unseen phone-side break end; current mirrored state remains the basis. Device reboot requires reopening/syncing the app to restore pending alerts.
+
+Settings now shows watch battery, charging, system saver and phone link (queried on resume) separately from sync age. Configurable delivery and paid-hour goals appear in Shift Summary, based only on the current phone snapshot. Targets persist on the watch and can be turned off. Goal bars cap at 100% while actual totals remain visible.
+
+Tests cover break deadlines, wrong/duplicate/late alarms and goal bounds. Real device alarm permission, background vibration, cancellation, countdown and layout must be checked.
+
 # Wear 2.2.51 — update screen visual polish
 
 Adds the existing app icon, compact brand/version header, blue receiving progress, green verified state, readable rounded primary/secondary actions, ripple feedback and round-screen scroll padding. Native system installer screens remain OS-owned. Transfer and verification logic unchanged. Build/lint and physical circular-screen visual review are the release checks; no new behavioural tests for this visual-only pass.

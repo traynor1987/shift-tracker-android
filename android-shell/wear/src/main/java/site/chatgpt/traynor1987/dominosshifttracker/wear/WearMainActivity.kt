@@ -166,6 +166,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         render()
     }
 
+    private var phoneLink = "Checking…"
     private var shownUpdate = ""
     private val updateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         runOnUiThread { openPendingUpdate() }
@@ -187,6 +188,11 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         Wearable.getMessageClient(this).addListener(this)
         getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
         openPendingUpdate()
+        WearBreakReminder.reconcile(this)
+        Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
+            phoneLink = if (nodes.isEmpty()) "Disconnected" else if (nodes.any { it.isNearby }) "Nearby" else "Remote link"
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) render()
+        }.addOnFailureListener { phoneLink = "Unavailable" }
         request()
         render()
         scheduleDim()
@@ -346,6 +352,34 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             topMargin = dp(8)
             bottomMargin = dp(12)
         })
+        val battery = getSystemService(android.os.BatteryManager::class.java)
+        val level = battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        panel.addView(summaryText("WATCH STATUS", 11f, Color.rgb(35, 161, 255), true), rowParams(8))
+        panel.addView(summaryRow("BATTERY", if (level in 0..100) "$level%" else "Unknown"))
+        panel.addView(summaryRow("CHARGING", if (battery.isCharging) "Yes" else "No"))
+        panel.addView(summaryRow("POWER SAVER", if (getSystemService(android.os.PowerManager::class.java).isPowerSaveMode) "On" else "Off"))
+        panel.addView(summaryRow("PHONE LINK", phoneLink))
+        panel.addView(summaryText("Link status checked when app opens; sync age shows data freshness.", 10f, Color.LTGRAY, false), rowParams(5))
+        panel.addView(summaryText("BREAK & GOALS", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
+        panel.addView(summaryAction("BREAK TARGET · ${WearGoals.breakMinutes(this)} MIN", Color.rgb(76, 85, 96)) {
+            WearGoals.cycle(this, "break_minutes", listOf(5, 10, 15, 20, 30, 45, 60), WearGoals.breakMinutes(this))
+            WearBreakReminder.reconcile(this); showInfo()
+        }, rowParams(5))
+        panel.addView(preferenceButton("BREAK VIBRATION", WearGoals.breakAlert(this)) {
+            WearGoals.toggleBreakAlert(this); WearBreakReminder.reconcile(this); showInfo()
+        }, rowParams(5))
+        if (!WearBreakReminder.precise(this)) panel.addView(summaryAction("PRECISE BREAK ALERTS", Color.rgb(8, 117, 209)) {
+            if (android.os.Build.VERSION.SDK_INT >= 31) runCatching {
+                startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
+            }
+        }, rowParams(5))
+        panel.addView(summaryText(if (WearBreakReminder.precise(this)) "Precise alerts enabled. Breaks end only when you end them." else "Background alerts may be delayed without alarm access.", 10f, Color.LTGRAY, false), rowParams(5))
+        panel.addView(summaryAction("DELIVERY GOAL · ${WearGoals.deliveries(this).takeIf { it > 0 } ?: "OFF"}", Color.rgb(76, 85, 96)) {
+            WearGoals.cycle(this, "deliveries", listOf(0, 10, 20, 30, 40, 50), WearGoals.deliveries(this)); showInfo()
+        }, rowParams(5))
+        panel.addView(summaryAction("PAID HOURS GOAL · ${WearGoals.hours(this).takeIf { it > 0 } ?: "OFF"}", Color.rgb(76, 85, 96)) {
+            WearGoals.cycle(this, "hours", listOf(0, 4, 6, 8, 10, 12), WearGoals.hours(this)); showInfo()
+        }, rowParams(5))
         panel.addView(preferenceButton("GEOFENCE VIBRATION", WearPreferences.hapticGeofence(this)) {
             WearPreferences.toggleHapticGeofence(this); showInfo()
         }, rowParams(5))
@@ -407,6 +441,19 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             panel.addView(summaryText(if (snapshot?.disconnected != false) "PHONE DISCONNECTED" else "NO ACTIVE SHIFT", 18f, Color.WHITE, true), rowParams(12))
         } else {
             panel.addView(summaryText("${snapshot.runs} runs · ${snapshot.deliveries} deliveries", 17f, Color.WHITE, true), rowParams(7))
+            if (WearGoals.deliveries(this) > 0 || WearGoals.hours(this) > 0) {
+                panel.addView(summaryText("SHIFT GOALS", 11f, Color.rgb(35, 161, 255), true), rowParams(10))
+                val deliveryGoal = WearGoals.deliveries(this)
+                if (deliveryGoal > 0) {
+                    panel.addView(summaryRow("DELIVERIES", "${snapshot.deliveries}/$deliveryGoal"))
+                    panel.addView(goalProgress(WearGoals.percent(snapshot.deliveries.toLong(), deliveryGoal.toLong())))
+                }
+                val hoursGoal = WearGoals.hours(this)
+                if (hoursGoal > 0) {
+                    panel.addView(summaryRow("PAID HOURS", "${WearDisplayPolicy.shiftDuration(snapshot.paidTimeSeconds)}/${hoursGoal}h"))
+                    panel.addView(goalProgress(WearGoals.percent(snapshot.paidTimeSeconds, hoursGoal * 3_600L)))
+                }
+            }
             panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.shiftDuration(snapshot.paidTimeSeconds)))
             panel.addView(summaryRow("BREAK", WearDisplayPolicy.shiftDuration(snapshot.breakTimeSeconds)))
             if (WearPreferences.showEarnings(this)) {
@@ -500,6 +547,12 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
+    private fun goalProgress(percent: Int) = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+        max = 100; progress = percent
+        progressTintList = android.content.res.ColorStateList.valueOf(if (percent >= 100) Color.rgb(70, 205, 170) else Color.rgb(35, 161, 255))
+        contentDescription = "$percent percent of goal"
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(3); bottomMargin = dp(5) }
+    }
     private fun recordedTime(timestamp: Long): String =
         if (timestamp <= 0L || timestamp > System.currentTimeMillis()) "Not recorded"
         else android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(timestamp))
@@ -680,6 +733,19 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         val start = if (snapshot.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
         val now = System.currentTimeMillis()
         timer.base = if (start in 1..now + 60_000L) SystemClock.elapsedRealtime() - (now - start).coerceAtLeast(0L) else SystemClock.elapsedRealtime()
+        timer.setOnChronometerTickListener(null)
+        timer.isCountDown = false
+        val breakDue = WearBreakReminder.due(this, snapshot)
+        if (breakDue != null) {
+            timer.base = SystemClock.elapsedRealtime() + (breakDue - now).coerceAtLeast(0)
+            timer.isCountDown = true
+            timer.setOnChronometerTickListener {
+                if (System.currentTimeMillis() >= breakDue) {
+                    it.stop(); it.text = "0:00"; state.text = "BREAK TARGET MET"
+                    WearBreakReminder.reconcile(this)
+                }
+            }
+        }
         timer.start()
         val where = when (snapshot.storeStatus) {
             "at_store" -> "AT STORE"
@@ -692,7 +758,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         } else ""
         val earnings = if (WearPreferences.showEarnings(this)) " • ${snapshot.pay}" else ""
         detail.text = "${snapshot.deliveries} deliveries$earnings${if (!delivery && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
-        contextDetail.text = WearDisplayPolicy.contextLine(snapshot, where)
+        contextDetail.text = if (snapshot.activity == "break") "${WearGoals.breakMinutes(this)} MIN TARGET · END MANUALLY" else WearDisplayPolicy.contextLine(snapshot, where)
 
         val deliveredLabel = if (snapshot.requiredCustomers > 1) {
             "DELIVERED ${(snapshot.deliveredCustomers + 1).coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"

@@ -28,6 +28,7 @@ object WearState {
         val next = parse(raw) ?: return
         val previous = read(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
+        WearBreakReminder.reconcile(context)
         WearRecentRuns.capture(context, previous, next)
         WearTransitionAlerts.notify(context, previous, next)
         WearComplicationRefresh.request(context)
