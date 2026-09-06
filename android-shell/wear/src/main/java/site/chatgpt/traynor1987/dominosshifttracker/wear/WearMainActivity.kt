@@ -190,7 +190,10 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var phoneLink = "Checking…"
     private var shownUpdate = ""
     private val updateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-        runOnUiThread { openPendingUpdate() }
+        runOnUiThread {
+            openPendingUpdate()
+            if (!dimmed && !systemAmbient && screen == Screen.INFO) showInfo()
+        }
     }
     private fun openPendingUpdate() {
         if (dimmed || systemAmbient) return
@@ -389,6 +392,14 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         val status = if (connected) "PHONE CONNECTED" else "PHONE NOT CONNECTED"
         val hint = if (connected) "● ${WearDisplayPolicy.syncAgeLabel(snapshot?.updatedAt ?: 0L)}" else "● Open phone app to reconnect"
         panel.addView(text(12f, Color.rgb(35, 161, 255)).apply { this.text = "SHIFT TRACKER" })
+        if (WearUpdateUi.isVisible(this)) {
+            val ready = hasReadyWearUpdate(this)
+            panel.addView(summaryAction(if (ready) "UPDATE READY · OPEN" else "UPDATE PROGRESS",
+                if (ready) Color.rgb(28, 157, 130) else Color.rgb(8, 117, 209)) {
+                startActivity(Intent(this, WearUpdateActivity::class.java))
+            }, rowParams(8))
+            if (ready) panel.addView(summaryText("Saved on watch · install when ready", 10f, Color.LTGRAY, false), rowParams(4))
+        }
         panel.addView(text(21f, Color.WHITE).apply { this.text = status })
         panel.addView(text(12f, if (connected) Color.rgb(70, 205, 170) else Color.rgb(239, 105, 90)).apply { this.text = hint }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8)
@@ -448,9 +459,6 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         if (!connected) panel.addView(summaryAction("OPEN PHONE", Color.rgb(76, 85, 96)) {
             WearTransport.openPhone(this)
         }, rowParams(6))
-        if (WearUpdateUi.isVisible(this)) panel.addView(summaryAction("WATCH UPDATE", Color.rgb(8, 117, 209)) {
-            startActivity(Intent(this, WearUpdateActivity::class.java))
-        }, rowParams(8))
         panel.addView(settingsButton(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
         val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         panel.addView(text(12f, Color.rgb(222, 218, 210)).apply {

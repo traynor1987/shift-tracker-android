@@ -1,3 +1,7 @@
+# Wear 2.2.56 — visible saved update entry
+
+Includes 2.2.55 processing fixes below. Moves the existing update entry to the top of Settings (tap main logo). Shows green UPDATE READY · OPEN and Saved on watch when the verified APK exists, or UPDATE PROGRESS during transfer. Reopens the existing updater without retransferring; dismissal does not hide this entry. Settings refreshes as transfer state changes while preserving scroll. Existing installation/version verification and backup notification remain in place.
+
 # Wear 2.2.55 — action completion refresh
 
 Phone retains bounded per-action reply routes after WebView acknowledgement, then removes them on final result. Final result also travels in normal snapshot sync as a missed-message fallback; watch matches by action ID and ignores duplicate outcomes without resetting expiry. Background result listener now registered. Foreground watches observe mirror preferences and schedule redraw at feedback expiry; bounded resync requests continue through the pending timeout without resending commands. Existing phone state remains authoritative.
