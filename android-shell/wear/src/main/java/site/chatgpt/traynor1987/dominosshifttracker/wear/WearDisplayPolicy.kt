@@ -1,6 +1,16 @@
 package site.chatgpt.traynor1987.dominosshifttracker.wear
 
 object WearDisplayPolicy {
+    fun activityTitle(activity: String): String = when (activity) {
+        "delivery_single" -> "SINGLE"
+        "delivery_double" -> "DOUBLE"
+        "break" -> "BREAK"
+        "cleaning" -> "CLEANING"
+        "prep" -> "PREP"
+        "task" -> "TASK"
+        else -> "AT STORE"
+    }
+
     fun duration(seconds: Long): String {
         val safe = seconds.coerceAtLeast(0L)
         val minutes = safe / 60

@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -103,7 +104,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(28), dp(16), dp(28), 0)
+            setPadding(dp(26), dp(10), dp(26), 0)
         }
         fun text(size: Float, colour: Int) = TextView(this).apply {
             textSize = size
@@ -114,30 +115,33 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         panel.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_shift_tracker)
             contentDescription = "Shift Tracker"
-        }, LinearLayout.LayoutParams(dp(23), dp(23)).apply { bottomMargin = dp(2) })
-        panel.addView(text(11f, Color.rgb(35, 161, 255)).apply { this.text = "SHIFT TRACKER" })
-        state = text(19f, Color.WHITE)
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { bottomMargin = dp(1) })
+        panel.addView(text(10f, Color.rgb(35, 161, 255)).apply { this.text = "SHIFT TRACKER" })
+        state = text(17f, Color.WHITE)
         panel.addView(state)
         timer = Chronometer(this).apply {
-            textSize = 34f
+            textSize = 31f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             includeFontPadding = false
         }
         panel.addView(timer)
-        detail = text(12f, Color.rgb(222, 218, 210))
+        detail = text(11f, Color.rgb(222, 218, 210))
         panel.addView(detail)
-        contextDetail = text(10f, Color.rgb(224, 163, 56)).apply { maxLines = 3 }
-        panel.addView(contextDetail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
-        actionStatus = text(10f, Color.rgb(105, 205, 180))
-        panel.addView(actionStatus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) })
+        contextDetail = text(9f, Color.rgb(224, 163, 56)).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        panel.addView(contextDetail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(1) })
+        actionStatus = text(9f, Color.rgb(105, 205, 180))
+        panel.addView(actionStatus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(1) })
         main.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         actions = ArcActionLayout(this)
         main.addView(actions, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         main.addView(infoButton(), FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply {
-            topMargin = dp(18)
-            rightMargin = dp(18)
+            topMargin = dp(20)
+            rightMargin = dp(24)
         })
         setContentView(root)
     }
@@ -207,7 +211,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         isFocusable = true
         addView(TextView(this@WearMainActivity).apply {
             text = "i"
-            textSize = 15f
+            textSize = 13f
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTypeface(typeface, Typeface.BOLD)
@@ -218,7 +222,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 setColor(Color.rgb(35, 35, 38))
                 setStroke(dp(1), Color.rgb(90, 170, 235))
             }
-        }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
         setOnClickListener { showInfo() }
     }
 
@@ -292,15 +296,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         dial.accent = colour
         dial.progress = if (delivery) .72f else .5f
         state.setTextColor(colour)
-        state.text = when (snapshot.activity) {
-            "delivery_single" -> "SINGLE DELIVERY"
-            "delivery_double" -> "DOUBLE DELIVERY"
-            "break" -> "BREAK"
-            "cleaning" -> "CLEANING"
-            "prep" -> "PREP"
-            "task" -> "TASK"
-            else -> "AT STORE"
-        }
+        state.textSize = if (delivery) 16f else 17f
+        state.text = WearDisplayPolicy.activityTitle(snapshot.activity)
         val start = if (snapshot.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
         val now = System.currentTimeMillis()
         timer.base = if (start in 1..now + 60_000L) SystemClock.elapsedRealtime() - (now - start).coerceAtLeast(0L) else SystemClock.elapsedRealtime()
@@ -354,7 +351,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
 
     private fun actionButton(label: String, action: String, colour: Int, pending: Boolean) = TextView(this).apply {
         text = label
-        textSize = if (label.length > 11) 9.5f else 11f
+        textSize = if (label.length > 11) 9f else 10.5f
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTypeface(typeface, Typeface.BOLD)
