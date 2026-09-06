@@ -305,7 +305,7 @@ class MainActivity : ComponentActivity() {
                 val outcome = message.optString("outcome").takeIf { it in setOf("applied", "already_applied", "stale_state", "invalid_action", "error") } ?: "error"
                 val pending = NativeShiftState.completeAction(this, id)
                 pending?.optString("sourceNodeId")?.takeIf { it.isNotBlank() }?.let { nodeId ->
-                    WearSync.reply(this, nodeId, id, outcome, message.optLong("stateRevision", -1L).takeIf { it >= 0L })
+                    WearSync.reply(this, nodeId, id, outcome, message.optString("stateRevision").takeIf { it.isNotBlank() })
                 }
                 WearSync.publish(this)
             }
@@ -384,7 +384,7 @@ class MainActivity : ComponentActivity() {
             .put("type", "shift_tracker_native_action:requested")
             .put("id", pending.optString("id"))
             .put("action", pending.optString("action"))
-            .put("expectedStateRevision", pending.optLong("expectedStateRevision", -1L))
+            .put("expectedStateRevision", pending.optString("expectedStateRevision"))
             .put("expectedShiftId", pending.optString("expectedShiftId"))
             .put("expectedActivityId", pending.optString("expectedActivityId"))
             .toString())

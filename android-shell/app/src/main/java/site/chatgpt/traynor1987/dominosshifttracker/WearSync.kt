@@ -24,7 +24,7 @@ object WearSync {
 
     /** A positive clocked-out reply replaces any last cached live watch state. */
     private fun inactiveSnapshot() = ShiftSnapshot(
-        stateRevision = System.currentTimeMillis(),
+        stateRevision = "off-${System.currentTimeMillis()}",
         shiftId = "",
         activityId = "",
         shiftActive = false,
@@ -73,7 +73,7 @@ object WearSync {
         publish(context, inactiveSnapshot())
     }
 
-    fun reply(context: Context, nodeId: String, id: String, outcome: String, stateRevision: Long? = null) {
+    fun reply(context: Context, nodeId: String, id: String, outcome: String, stateRevision: String? = null) {
         val payload = JSONObject().put("id", id).put("outcome", outcome)
         stateRevision?.let { payload.put("stateRevision", it) }
         Wearable.getMessageClient(context).sendMessage(nodeId, RESULT_PATH, payload.toString().toByteArray())

@@ -13,7 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ShiftSnapshot(
-    val stateRevision: Long,
+    val stateRevision: String,
     val shiftId: String,
     val activityId: String,
     val shiftActive: Boolean,
@@ -94,10 +94,10 @@ object NativeShiftState {
         if (current != null && System.currentTimeMillis() - current.optLong("createdAt") < 4_000L) return "already_pending"
         val snapshot = read(context) ?: return "stale_state"
         if (snapshot.isStale || action !in snapshot.allowedActions) return "invalid_action"
-        val expectedRevision = request.optLong("expectedStateRevision", -1L)
+        val expectedRevision = request.optString("expectedStateRevision")
         val expectedShiftId = request.optString("expectedShiftId")
         val expectedActivityId = request.optString("expectedActivityId")
-        if ((expectedRevision >= 0L && expectedRevision != snapshot.stateRevision)
+        if ((expectedRevision.isNotBlank() && expectedRevision != snapshot.stateRevision)
             || (expectedShiftId.isNotBlank() && expectedShiftId != snapshot.shiftId)
             || (expectedActivityId.isNotBlank() && expectedActivityId != snapshot.activityId)) return "stale_state"
         val id = request.optString("id").takeIf { it.isNotBlank() && it.length <= 160 }
@@ -176,7 +176,7 @@ object NativeShiftState {
             .put("taskReminders", inputSettings.optBoolean("taskReminders", false))
             .put("photoCompression", if (inputSettings.optString("photoCompression") == "original") "original" else "automatic")
         return JSONObject()
-            .put("stateRevision", raw.optLong("stateRevision", 0L).coerceAtLeast(0L))
+            .put("stateRevision", raw.optString("stateRevision").trim().take(240))
             .put("shiftId", raw.optString("shiftId").trim().take(128))
             .put("activityId", raw.optString("activityId").trim().take(128))
             .put("shiftActive", shiftActive)
@@ -197,7 +197,7 @@ object NativeShiftState {
         if (activity !in ACTIVITIES) return null
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
-        return ShiftSnapshot(value.optLong("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
+        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }

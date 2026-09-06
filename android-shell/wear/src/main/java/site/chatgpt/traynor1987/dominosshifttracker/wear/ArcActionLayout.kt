@@ -21,13 +21,15 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
     override fun generateDefaultLayoutParams() = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
     override fun checkLayoutParams(p: LayoutParams?) = p != null
 
-    private fun buttonWidth(count: Int) = when (count) {
-        1 -> 184
-        2 -> 128
-        else -> 104
-    }
+    private fun dp(value: Float) = value * resources.displayMetrics.density
 
-    private fun buttonHeight(count: Int) = if (count == 1) 64 else 60
+    private fun buttonWidth(count: Int, availableWidth: Int) = when (count) {
+        1 -> minOf(dp(160f), availableWidth * .72f)
+        2 -> minOf(dp(104f), availableWidth * .43f)
+        else -> minOf(dp(78f), availableWidth * .31f)
+    }.toInt().coerceAtLeast(dp(48f).toInt())
+
+    private fun buttonHeight(count: Int) = dp(if (count == 1) 60f else 52f).toInt()
 
     private fun actionCenters(count: Int): List<Pair<Float, Float>> {
         val radius = min(width, height) * .34f
@@ -48,7 +50,7 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         val measuredWidth = MeasureSpec.getSize(widthSpec)
         val measuredHeight = MeasureSpec.getSize(heightSpec)
-        val childWidth = buttonWidth(childCount)
+        val childWidth = buttonWidth(childCount, measuredWidth)
         val childHeight = buttonHeight(childCount)
         for (index in 0 until childCount) {
             getChildAt(index).measure(
@@ -66,7 +68,7 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
         val centerY = height * .47f
         val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 2f
+        paint.strokeWidth = dp(2f)
         paint.color = Color.argb(135, 36, 161, 255)
         canvas.drawArc(arc, 35f, 110f, false, paint)
         paint.style = Paint.Style.FILL

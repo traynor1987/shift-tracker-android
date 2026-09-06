@@ -36,6 +36,7 @@ jobs:
     outputs:
       version_name: ${{ steps.release_assets.outputs.version_name }}
       version_code: ${{ steps.release_assets.outputs.version_code }}
+      wear_version_code: ${{ steps.release_assets.outputs.wear_version_code }}
 
     steps:
       - name: Check out source
@@ -81,7 +82,7 @@ jobs:
           SHIFT_TRACKER_KEYSTORE_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEYSTORE_PASSWORD }}
           SHIFT_TRACKER_KEY_ALIAS: ${{ secrets.SHIFT_TRACKER_KEY_ALIAS }}
           SHIFT_TRACKER_KEY_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEY_PASSWORD }}
-        run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :app:assembleRelease :wear:assembleRelease
+        run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :wear:testDebugUnitTest :wear:lintDebug :app:assembleRelease :wear:assembleRelease
 
       - name: Verify portrait activity lock
         run: grep -F 'android:screenOrientation="portrait"' app/src/main/AndroidManifest.xml
@@ -158,6 +159,7 @@ jobs:
             '{channel:$channel,versionName:$versionName,versionCode:$versionCode,minimumWebVersion:$minimumWebVersion,apkFile:$apkFile,sha256:$sha256,releaseNotes:($notes | split("\n") | map(select(length > 0))),wear:{versionName:$wearName,versionCode:$wearCode,asset:$wearFile,sha256:$wearSha}}' > "$RELEASE_DIR/shift-tracker-android-release.json"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "wear_version_code=$WEAR_VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "release_dir=$RELEASE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Upload verified release bundle
@@ -174,7 +176,7 @@ jobs:
 
   publish-stable-release:
     name: Publish verified public stable release
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: build-signed-apk
     runs-on: ubuntu-24.04
     permissions:
@@ -191,12 +193,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_CODE: ${{ needs.build-signed-apk.outputs.version_code }}
+          WEAR_VERSION_CODE: ${{ needs.build-signed-apk.outputs.wear_version_code }}
         run: |
           set -euo pipefail
           METADATA_URL=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "shift-tracker-android-release.json") | .browser_download_url' | head -n1 || true)
           if [ -n "$METADATA_URL" ]; then
             PREVIOUS_CODE=$(curl --fail --silent --show-error --location "$METADATA_URL" | jq -r '.versionCode')
+            PREVIOUS_WEAR_CODE=$(curl --fail --silent --show-error --location "$METADATA_URL" | jq -r '.wear.versionCode // 0')
             test "$PREVIOUS_CODE" -lt "$VERSION_CODE"
+            test "$PREVIOUS_WEAR_CODE" -lt "$WEAR_VERSION_CODE"
           fi
 
       - name: Publish verified public stable GitHub Release
