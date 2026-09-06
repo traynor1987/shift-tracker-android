@@ -17,6 +17,12 @@ class WearDisplayPolicyTest {
         assertEquals("2:05", WearDisplayPolicy.duration(125))
     }
 
+    @Test fun shiftDurationUsesHoursAndMinutes() {
+        assertEquals("0:00", WearDisplayPolicy.shiftDuration(0))
+        assertEquals("3:26", WearDisplayPolicy.shiftDuration(12_394))
+        assertEquals("8:05", WearDisplayPolicy.shiftDuration(29_159))
+    }
+
     @Test fun deliveryTitlesStayCompactOnRoundScreens() {
         assertEquals("SINGLE", WearDisplayPolicy.activityTitle("delivery_single"))
         assertEquals("DOUBLE", WearDisplayPolicy.activityTitle("delivery_double"))

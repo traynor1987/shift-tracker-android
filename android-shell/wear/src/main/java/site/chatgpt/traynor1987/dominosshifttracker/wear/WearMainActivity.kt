@@ -228,8 +228,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             panel.addView(summaryText(if (snapshot?.disconnected != false) "PHONE DISCONNECTED" else "NO ACTIVE SHIFT", 18f, Color.WHITE, true), rowParams(12))
         } else {
             panel.addView(summaryText("${snapshot.runs} runs · ${snapshot.deliveries} deliveries", 17f, Color.WHITE, true), rowParams(7))
-            panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.duration(snapshot.paidTimeSeconds)))
-            panel.addView(summaryRow("BREAK", WearDisplayPolicy.duration(snapshot.breakTimeSeconds)))
+            panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.shiftDuration(snapshot.paidTimeSeconds)))
+            panel.addView(summaryRow("BREAK", WearDisplayPolicy.shiftDuration(snapshot.breakTimeSeconds)))
             panel.addView(summaryRow("WAGES", snapshot.pay.ifBlank { "—" }))
             panel.addView(summaryRow("DELIVERIES", snapshot.deliveryReimbursement.ifBlank { "—" }))
             panel.addView(summaryRow("TOTAL", snapshot.shiftTotal.ifBlank { snapshot.pay.ifBlank { "—" } }, true))

@@ -17,6 +17,14 @@ object WearDisplayPolicy {
         return "$minutes:${(safe % 60).toString().padStart(2, '0')}"
     }
 
+    /** Shift totals are easier to read as hours and minutes. Delivery hustle
+     * timings still use duration() because those are minute-scale timers. */
+    fun shiftDuration(seconds: Long): String {
+        val safe = seconds.coerceAtLeast(0L)
+        val totalMinutes = safe / 60
+        return "${totalMinutes / 60}:${(totalMinutes % 60).toString().padStart(2, '0')}"
+    }
+
     fun contextLine(snapshot: WearSnapshot, storeLabel: String): String {
         val delivery = snapshot.activity.startsWith("delivery_")
         if (!delivery) return snapshot.pausedTaskName.takeIf { it.isNotBlank() }?.let { "PAUSED: $it\nResume it?" }.orEmpty()
