@@ -26,19 +26,19 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
     private fun buttonWidth(count: Int, availableWidth: Int) = when (count) {
         1 -> minOf(dp(160f), availableWidth * .72f)
         2 -> minOf(dp(104f), availableWidth * .43f)
-        else -> minOf(dp(78f), availableWidth * .31f)
+        else -> minOf(dp(70f), availableWidth * .28f)
     }.toInt().coerceAtLeast(dp(48f).toInt())
 
-    private fun buttonHeight(count: Int) = dp(if (count == 1) 60f else 52f).toInt()
+    private fun buttonHeight(count: Int) = dp(if (count == 1) 56f else 48f).toInt()
 
     private fun actionCenters(count: Int): List<Pair<Float, Float>> {
-        val radius = min(width, height) * .34f
+        val radius = min(width, height) * .36f
         val centerX = width / 2f
         val centerY = height * .47f
         val angles = when (count) {
             1 -> listOf(90.0)
             2 -> listOf(118.0, 62.0)
-            else -> listOf(135.0, 90.0, 45.0)
+            else -> listOf(138.0, 90.0, 42.0)
         }
         return angles.map { angle ->
             val radians = Math.toRadians(angle)
@@ -63,7 +63,7 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
 
     override fun onDraw(canvas: Canvas) {
         if (childCount == 0) return
-        val radius = min(width, height) * .34f
+        val radius = min(width, height) * .36f
         val centerX = width / 2f
         val centerY = height * .47f
         val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
