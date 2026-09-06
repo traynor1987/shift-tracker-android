@@ -1,3 +1,9 @@
+# Wear 2.2.55 — action completion refresh
+
+Phone retains bounded per-action reply routes after WebView acknowledgement, then removes them on final result. Final result also travels in normal snapshot sync as a missed-message fallback; watch matches by action ID and ignores duplicate outcomes without resetting expiry. Background result listener now registered. Foreground watches observe mirror preferences and schedule redraw at feedback expiry; bounded resync requests continue through the pending timeout without resending commands. Existing phone state remains authoritative.
+
+Regression policy tests cover matching/mismatched IDs and late queued results. CI native tests/lint/signing plus real watch checks: Delivered 1/2 then 2/2, break end, task completion, missed result/reconnect, dim during request. Both phone and watch should be updated for full fix.
+
 # Wear 2.2.54 — confirm break end and retain ambient shift
 
 End Break now asks for confirmation; cancel/Back leaves the break running. Confirm rechecks the current break start and allowed action before sending via existing transport. The foreground dim timer is suspended while the dialog is open.

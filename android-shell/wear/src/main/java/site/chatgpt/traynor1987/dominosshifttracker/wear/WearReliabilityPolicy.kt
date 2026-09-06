@@ -21,5 +21,8 @@ object WearReliabilityPolicy {
     fun isUpgrade(candidateCode: Long, currentCode: Long): Boolean =
         candidateCode > currentCode && currentCode > 0L
 
+    fun acceptActionResult(currentId: String, currentOutcome: String, resultId: String, resultOutcome: String): Boolean =
+        currentId == resultId && (actionIsPending(currentOutcome) || !actionIsPending(resultOutcome))
+
     fun actionIsPending(outcome: String): Boolean = outcome == "sending" || outcome == "queued"
 }

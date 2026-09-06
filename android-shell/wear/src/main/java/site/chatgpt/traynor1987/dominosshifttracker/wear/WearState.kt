@@ -22,10 +22,12 @@ data class WearActionFeedback(val id: String, val action: String, val outcome: S
 
 object WearState {
     const val STATE_PATH = "/shift-tracker/state"; const val ACTION_PATH = "/shift-tracker/action"; const val REQUEST_PATH = "/shift-tracker/request-state"; const val RESULT_PATH = "/shift-tracker/action-result"; const val OPEN_PHONE_PATH = "/shift-tracker/open-phone"
-    private const val PREFS = "shift_tracker_wear_mirror_v1"; private const val KEY = "snapshot"; private const val ACTION_KEY = "action_feedback"
+    const val PREFS = "shift_tracker_wear_mirror_v1"; private const val KEY = "snapshot"; private const val ACTION_KEY = "action_feedback"
     fun read(context: Context): WearSnapshot? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)?.let { parse(it) }
     fun save(context: Context, raw: String) {
         val next = parse(raw) ?: return
+        runCatching { JSONObject(raw).optString("lastActionResult") }.getOrNull()
+            ?.takeIf { it.isNotBlank() }?.let { updateActionFeedback(context, it) }
         val previous = read(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
         WearBreakReminder.reconcile(context)
@@ -53,7 +55,8 @@ object WearState {
         // The phone sends an immediate queued acknowledgement and a final
         // result later. Never let an out-of-order acknowledgement replace a
         // final result that the driver has already seen.
-        if (!current.pending && WearReliabilityPolicy.actionIsPending(outcome)) return current
+        if (!WearReliabilityPolicy.acceptActionResult(current.id, current.outcome, id, outcome)) return current
+        if (current.outcome == outcome) return current
         saveActionFeedback(context, current.id, current.action, outcome)
         return readActionFeedback(context)
     }

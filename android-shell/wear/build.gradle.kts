@@ -19,8 +19,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 30
         targetSdk = 35
-        versionCode = 59
-        versionName = "2.2.54"
+        versionCode = 60
+        versionName = "2.2.55"
     }
     signingConfigs {
         if (releaseSigningReady) create("shiftTrackerRelease") {
@@ -49,4 +49,3 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
     testImplementation(kotlin("test"))
 }
-

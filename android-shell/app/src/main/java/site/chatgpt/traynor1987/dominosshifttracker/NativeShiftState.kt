@@ -98,7 +98,9 @@ object NativeShiftState {
             .put("expectedStateRevision", snapshot.stateRevision)
             .put("expectedShiftId", snapshot.shiftId)
             .put("expectedActivityId", snapshot.activityId)
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PENDING_ACTION, payload.toString())
+            .putString("wear_reply_" + id, payload.toString()).apply()
         return true
     }
 
@@ -123,6 +125,13 @@ object NativeShiftState {
             || (expectedActivityId.isNotBlank() && expectedActivityId != snapshot.activityId)) return "stale_state"
         val id = request.optString("id").takeIf { it.isNotBlank() && it.length <= 160 }
             ?: "wear-${System.currentTimeMillis()}-${action}"
+        val routePrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        routePrefs.edit().apply {
+            routePrefs.all.filterKeys { it.startsWith("wear_reply_") }.forEach { (key, raw) ->
+                val created = runCatching { JSONObject(raw as String).optLong("createdAt") }.getOrDefault(0L)
+                if (System.currentTimeMillis() - created !in 0..300_000L) remove(key)
+            }
+        }.apply()
         val payload = JSONObject()
             .put("id", id)
             .put("action", action)
@@ -132,7 +141,9 @@ object NativeShiftState {
             .put("expectedActivityId", snapshot.activityId)
             .put("sourceNodeId", sourceNodeId.take(160))
         taskName?.let { payload.put("taskName", it) }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PENDING_ACTION, payload.toString())
+            .putString("wear_reply_" + id, payload.toString()).apply()
         return "queued"
     }
 
@@ -151,10 +162,15 @@ object NativeShiftState {
     }
 
     fun completeAction(context: Context, id: String): JSONObject? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val current = peekPendingActionUnsafe(context)
-        if (current?.optString("id") != id) return null
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_PENDING_ACTION).apply()
-        return current
+        val saved = prefs.getString("wear_reply_" + id, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val reply = current?.takeIf { it.optString("id") == id } ?: saved
+        prefs.edit().apply {
+            if (current?.optString("id") == id) remove(KEY_PENDING_ACTION)
+            remove("wear_reply_" + id)
+        }.apply()
+        return reply?.takeIf { System.currentTimeMillis() - it.optLong("createdAt") in 0..300_000L }
     }
 
     fun actionPendingIntent(context: Context, action: String, requestCode: Int): PendingIntent = PendingIntent.getActivity(

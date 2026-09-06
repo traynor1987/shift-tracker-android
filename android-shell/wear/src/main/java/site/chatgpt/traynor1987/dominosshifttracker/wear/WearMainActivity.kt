@@ -54,6 +54,12 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var lastFeedbackOutcome = ""
     private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
+    private val feedbackRefresh = Runnable { render() }
+    private val mirrorListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        runOnUiThread {
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) render()
+        }
+    }
 
     private var breakConfirmation: AlertDialog? = null
     private val notificationPermission = registerForActivityResult(
@@ -199,6 +205,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     override fun onResume() {
         super.onResume()
         if (!ambientObserver.isAmbient) { systemAmbient = false; wakeDisplay() }
+        getSharedPreferences(WearState.PREFS, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(mirrorListener)
         Wearable.getDataClient(this).addListener(this)
         Wearable.getMessageClient(this).addListener(this)
         getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
@@ -216,6 +223,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     override fun onPause() {
+        getSharedPreferences(WearState.PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(mirrorListener)
         getSharedPreferences("wear_update", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(updateListener)
         Wearable.getDataClient(this).removeListener(this)
         Wearable.getMessageClient(this).removeListener(this)
@@ -707,6 +715,11 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         val snapshot = WearState.read(this)
         val feedback = WearState.readActionFeedback(this)?.takeIf { it.visible }
         val pending = feedback?.pending == true
+        handler.removeCallbacks(feedbackRefresh)
+        if (feedback != null && feedback.visible) {
+            val duration = if (pending) WearReliabilityPolicy.ACTION_PENDING_TIMEOUT_MS else WearReliabilityPolicy.ACTION_RESULT_VISIBLE_MS
+            handler.postDelayed(feedbackRefresh, (feedback.updatedAt + duration - System.currentTimeMillis() + 50L).coerceAtLeast(50L))
+        }
         actions.removeAllViews()
         contextDetail.text = ""
         actionStatus.text = feedback?.let(::feedbackText).orEmpty()
@@ -885,7 +898,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private fun request() = WearTransport.requestState(this)
 
     private fun resync() {
-        listOf(600L, 1_800L, 4_000L).forEach { delay -> handler.postDelayed({ request(); render() }, delay) }
+        listOf(600L, 1_800L, 4_000L, 8_000L, 15_000L, 20_100L).forEach { delay -> handler.postDelayed({ request(); render() }, delay) }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt().coerceAtLeast(1)

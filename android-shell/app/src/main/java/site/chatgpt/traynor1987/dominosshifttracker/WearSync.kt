@@ -59,6 +59,7 @@ object WearSync {
         // state. Returning without a DataItem left the last timer running.
         val current = snapshot ?: NativeShiftState.read(context) ?: inactiveSnapshot()
         val raw = JSONObject()
+            .put("lastActionResult", context.getSharedPreferences("wear_action_result", Context.MODE_PRIVATE).getString("result", ""))
             .put("stateRevision", current.stateRevision)
             .put("shiftId", current.shiftId)
             .put("activityId", current.activityId)
@@ -103,6 +104,10 @@ object WearSync {
     fun reply(context: Context, nodeId: String, id: String, outcome: String, stateRevision: String? = null) {
         val payload = JSONObject().put("id", id).put("outcome", outcome)
         stateRevision?.let { payload.put("stateRevision", it) }
+        if (outcome !in setOf("queued", "sending", "already_pending")) {
+            context.getSharedPreferences("wear_action_result", Context.MODE_PRIVATE).edit()
+                .putString("result", payload.toString()).apply()
+        }
         Wearable.getMessageClient(context).sendMessage(nodeId, RESULT_PATH, payload.toString().toByteArray())
     }
     fun requestWearVersion(context: Context) { Wearable.getNodeClient(context).connectedNodes.addOnSuccessListener { nodes -> nodes.forEach { Wearable.getMessageClient(context).sendMessage(it.id, WEAR_VERSION_PATH, byteArrayOf()) } } }
