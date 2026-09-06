@@ -1,3 +1,7 @@
+# Wear 2.2.58 — confirm break start too
+
+Includes the 2.2.57 reconnect and visual improvements below. Break start now shares the styled confirmation dialog, showing target minutes, Start Break and Keep Working. Cancel/Back does not send an action. Both start/end recheck current mirrored freshness, identity and allowed action before dispatch; no optimistic change to phone state. Physical round-screen confirmation/cancel checks remain required.
+
 # Wear 2.2.57 — friendly reconnect and break confirmation
 
 Replaces giant STATE STALE with Waiting for phone / Let’s reconnect, last sync age, explicitly last-known activity, proximity/app guidance and Retry Sync. Does not claim Bluetooth is disconnected merely because the mirror is old; action controls remain unavailable until fresh data arrives. Normal timer sizing restored after reconnect; ambient wording also softened.

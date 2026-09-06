@@ -639,7 +639,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         setOnClickListener { action() }
     }
 
-    private fun confirmEndBreak() {
+    private fun confirmBreak(action: String) {
+        val ending = action == "end_break"
         if (breakConfirmation?.isShowing == true) return
         val original = WearState.read(this) ?: return
         handler.removeCallbacks(dimTask)
@@ -652,25 +653,25 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         panel.addView(ImageView(this).apply { setImageResource(R.drawable.ic_shift_tracker) },
             LinearLayout.LayoutParams(dp(24), dp(24)))
-        panel.addView(summaryText("End break?", 19f, Color.WHITE, true), rowParams(8))
+        panel.addView(summaryText(if (ending) "End break?" else "Start break?", 19f, Color.WHITE, true), rowParams(8))
         val elapsed = ((System.currentTimeMillis() - original.activityStarted) / 60_000L).coerceAtLeast(0)
-        panel.addView(summaryText("$elapsed min on break", 12f, Color.rgb(224, 163, 56), true), rowParams(5))
-        panel.addView(summaryText("Ready to get back to work?", 11f, Color.LTGRAY, false), rowParams(6))
+        panel.addView(summaryText(if (ending) "$elapsed min on break" else "${WearGoals.breakMinutes(this)} min target", 12f, Color.rgb(224, 163, 56), true), rowParams(5))
+        panel.addView(summaryText(if (ending) "Ready to get back to work?" else "Are you sure you want to start your break?", 11f, Color.LTGRAY, false), rowParams(6))
         fun choice(label: String, colour: Int, onClick: () -> Unit) = summaryAction(label, colour, onClick).apply {
             minHeight = dp(44)
             setPadding(dp(8), dp(10), dp(8), dp(10))
         }
-        panel.addView(choice("END BREAK", Color.rgb(148, 98, 19)) {
+        panel.addView(choice(if (ending) "END BREAK" else "START BREAK", Color.rgb(148, 98, 19)) {
             dialog.dismiss()
             val current = WearState.read(this)
-            if (current?.active == true && !current.disconnected && current.activity == "break" &&
+            if (current?.active == true && !current.disconnected && (if (ending) current.activity == "break" else current.activity == original.activity) &&
                 current.shiftId == original.shiftId && current.activityId == original.activityId &&
-                current.activityStarted == original.activityStarted && "end_break" in current.actions) {
-                WearTransport.sendAction(this, "end_break")
+                current.activityStarted == original.activityStarted && action in current.actions) {
+                WearTransport.sendAction(this, action)
                 resync()
             } else { request(); render() }
         }, rowParams(12))
-        panel.addView(choice("STAY ON BREAK", Color.rgb(38, 44, 53)) { dialog.dismiss() }, rowParams(6))
+        panel.addView(choice(if (ending) "STAY ON BREAK" else "KEEP WORKING", Color.rgb(38, 44, 53)) { dialog.dismiss() }, rowParams(6))
         dialog.setContentView(ScrollView(this).apply { setBackgroundColor(Color.BLACK); addView(panel) })
         dialog.setOnDismissListener { breakConfirmation = null; scheduleDim() }
         dialog.show()
@@ -908,8 +909,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         elevation = 0f
         setOnClickListener {
-            if (action == "end_break") {
-                confirmEndBreak()
+            if (action == "end_break" || action == "break") {
+                confirmBreak(action)
                 return@setOnClickListener
             }
             isEnabled = false
