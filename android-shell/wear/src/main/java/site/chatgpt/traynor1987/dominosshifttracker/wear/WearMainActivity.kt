@@ -3,6 +3,7 @@ package site.chatgpt.traynor1987.dominosshifttracker.wear
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -37,6 +38,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     private lateinit var state: TextView
     private lateinit var timer: Chronometer
     private lateinit var detail: TextView
+    private lateinit var contextDetail: TextView
     private lateinit var actionStatus: TextView
     private lateinit var actions: ArcActionLayout
     private var showingInfo = false
@@ -125,6 +127,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         panel.addView(timer)
         detail = text(12f, Color.rgb(222, 218, 210))
         panel.addView(detail)
+        contextDetail = text(10f, Color.rgb(224, 163, 56)).apply { maxLines = 3 }
+        panel.addView(contextDetail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
         actionStatus = text(10f, Color.rgb(105, 205, 180))
         panel.addView(actionStatus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) })
         main.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
@@ -132,8 +136,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         actions = ArcActionLayout(this)
         main.addView(actions, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         main.addView(infoButton(), FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply {
-            topMargin = dp(6)
-            rightMargin = dp(7)
+            topMargin = dp(18)
+            rightMargin = dp(18)
         })
         setContentView(root)
     }
@@ -197,20 +201,24 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         render()
     }
 
-    private fun infoButton() = Button(this).apply {
-        text = "ⓘ"
-        textSize = 18f
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        isAllCaps = false
-        setPadding(0, 0, 0, 0)
-        setTextColor(Color.WHITE)
+    private fun infoButton() = FrameLayout(this).apply {
         contentDescription = "Settings and About"
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.rgb(35, 35, 38))
-            setStroke(dp(2), Color.rgb(90, 170, 235))
-        }
+        isClickable = true
+        isFocusable = true
+        addView(TextView(this@WearMainActivity).apply {
+            text = "i"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            isDuplicateParentStateEnabled = true
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(35, 35, 38))
+                setStroke(dp(1), Color.rgb(90, 170, 235))
+            }
+        }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
         setOnClickListener { showInfo() }
     }
 
@@ -236,6 +244,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         val feedback = WearState.readActionFeedback(this)?.takeIf { it.visible }
         val pending = feedback?.pending == true
         actions.removeAllViews()
+        contextDetail.text = ""
         actionStatus.text = feedback?.let(::feedbackText).orEmpty()
         actionStatus.setTextColor(if (feedback?.outcome in setOf("stale_state", "invalid_action", "error", "not_connected", "send_failed")) Color.rgb(239, 105, 90) else Color.rgb(105, 205, 180))
         feedback?.outcome?.takeIf { it != lastFeedbackOutcome && it !in setOf("sending", "queued") }?.let { outcome ->
@@ -252,6 +261,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             timer.stop()
             timer.text = "STATE STALE"
             detail.text = "Open phone to reconnect"
+            contextDetail.text = ""
             actions.addView(openPhoneButton())
             actions.requestLayout()
             return
@@ -265,6 +275,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             timer.stop()
             timer.text = "OFF"
             detail.text = "Open phone to start a shift"
+            contextDetail.text = ""
             actions.addView(openPhoneButton())
             actions.requestLayout()
             return
@@ -300,11 +311,19 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             "detecting" -> "DETECTING GPS"
             else -> ""
         }
-        detail.text = "${snapshot.deliveries} deliveries • ${snapshot.pay}${if (snapshot.name.isNotBlank()) "\n${snapshot.name}" else ""}${if (where.isNotBlank()) " • $where" else ""}"
+        val customerProgress = if (delivery && snapshot.requiredCustomers > 0) {
+            "CUSTOMER ${snapshot.deliveredCustomers.coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
+        } else ""
+        detail.text = "${snapshot.deliveries} deliveries • ${snapshot.pay}${if (!delivery && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
+        contextDetail.text = WearDisplayPolicy.contextLine(snapshot, where)
+
+        val deliveredLabel = if (snapshot.requiredCustomers > 1) {
+            "DELIVERED ${(snapshot.deliveredCustomers + 1).coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
+        } else "DELIVERED"
 
         listOf(
-            "delivered" to "DELIVERED",
-            "back_at_store" to "RETURN",
+            "delivered" to deliveredLabel,
+            "back_at_store" to "BACK AT STORE",
             "end_break" to "END BREAK",
             "complete_task" to "COMPLETE",
             "single" to "SINGLE",
@@ -333,12 +352,14 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         else -> "ACTION FAILED — TRY AGAIN"
     }
 
-    private fun actionButton(label: String, action: String, colour: Int, pending: Boolean) = Button(this).apply {
+    private fun actionButton(label: String, action: String, colour: Int, pending: Boolean) = TextView(this).apply {
         text = label
-        textSize = 11f
+        textSize = if (label.length > 11) 9.5f else 11f
         gravity = Gravity.CENTER
         includeFontPadding = false
-        isAllCaps = false
+        setTypeface(typeface, Typeface.BOLD)
+        isClickable = true
+        isFocusable = true
         setPadding(dp(4), 0, dp(4), 0)
         setTextColor(Color.WHITE)
         isEnabled = !pending

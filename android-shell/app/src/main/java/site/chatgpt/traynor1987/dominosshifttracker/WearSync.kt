@@ -34,6 +34,12 @@ object WearSync {
         activityStartedAt = 0L,
         deliveries = 0,
         estimatedPay = "",
+        deliveredCustomers = 0,
+        requiredCustomers = 0,
+        earlyDispatchGapSeconds = 0,
+        storeExitAt = 0L,
+        storeEntryAt = 0L,
+        pausedTaskName = "",
         storeStatus = "unknown",
         allowedActions = emptySet(),
         updatedAt = System.currentTimeMillis(),
@@ -55,6 +61,12 @@ object WearSync {
             .put("activityStartedAtEpochMs", current.activityStartedAt)
             .put("deliveries", current.deliveries)
             .put("estimatedPay", current.estimatedPay)
+            .put("deliveredCustomers", current.deliveredCustomers)
+            .put("requiredCustomers", current.requiredCustomers)
+            .put("earlyDispatchGapSeconds", current.earlyDispatchGapSeconds)
+            .put("storeExitAtEpochMs", current.storeExitAt)
+            .put("storeEntryAtEpochMs", current.storeEntryAt)
+            .put("pausedTaskName", current.pausedTaskName)
             .put("storeStatus", current.storeStatus)
             .put("allowedActions", current.allowedActions.joinToString(","))
             .put("updatedAtEpochMs", current.updatedAt)
