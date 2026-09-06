@@ -34,6 +34,12 @@ object WearSync {
         activityStartedAt = 0L,
         deliveries = 0,
         estimatedPay = "",
+        paidTimeSeconds = 0L,
+        breakTimeSeconds = 0L,
+        deliveryReimbursement = "",
+        shiftTotal = "",
+        miles = "",
+        runs = 0,
         deliveredCustomers = 0,
         requiredCustomers = 0,
         earlyDispatchGapSeconds = 0,
@@ -61,6 +67,12 @@ object WearSync {
             .put("activityStartedAtEpochMs", current.activityStartedAt)
             .put("deliveries", current.deliveries)
             .put("estimatedPay", current.estimatedPay)
+            .put("paidTimeSeconds", current.paidTimeSeconds)
+            .put("breakTimeSeconds", current.breakTimeSeconds)
+            .put("deliveryReimbursement", current.deliveryReimbursement)
+            .put("shiftTotal", current.shiftTotal)
+            .put("miles", current.miles)
+            .put("runs", current.runs)
             .put("deliveredCustomers", current.deliveredCustomers)
             .put("requiredCustomers", current.requiredCustomers)
             .put("earlyDispatchGapSeconds", current.earlyDispatchGapSeconds)

@@ -1,6 +1,7 @@
 package site.chatgpt.traynor1987.dominosshifttracker.wear
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -33,6 +34,8 @@ import com.google.android.gms.wearable.Wearable
 import kotlin.math.abs
 
 class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
+    private enum class Screen { MAIN, SUMMARY, INFO }
+
     private lateinit var root: FrameLayout
     private lateinit var main: FrameLayout
     private lateinit var dial: WearDialView
@@ -42,7 +45,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     private lateinit var contextDetail: TextView
     private lateinit var actionStatus: TextView
     private lateinit var actions: ArcActionLayout
-    private var showingInfo = false
+    private var screen = Screen.MAIN
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var lastFeedbackOutcome = ""
@@ -156,7 +159,11 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 val horizontal = event.x - swipeStartX
                 val vertical = event.y - swipeStartY
                 if (abs(horizontal) > dp(55) && abs(horizontal) > abs(vertical) * 1.2f) {
-                    if (horizontal > 0) showInfo() else showMain()
+                    when (screen) {
+                        Screen.MAIN -> if (horizontal > 0) showInfo() else showSummary()
+                        Screen.SUMMARY -> if (horizontal > 0) showMain() else Unit
+                        Screen.INFO -> if (horizontal < 0) showMain() else Unit
+                    }
                     return true
                 }
             }
@@ -165,7 +172,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     }
 
     private fun showInfo() {
-        showingInfo = true
+        screen = Screen.INFO
         root.keepScreenOn = false
         timer.stop()
         root.removeAllViews()
@@ -198,11 +205,94 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     }
 
     private fun showMain() {
-        if (!showingInfo) return
-        showingInfo = false
+        if (screen == Screen.MAIN) return
+        screen = Screen.MAIN
         root.removeAllViews()
         root.addView(main)
         render()
+    }
+
+    private fun showSummary() {
+        screen = Screen.SUMMARY
+        root.keepScreenOn = false
+        timer.stop()
+        root.removeAllViews()
+        val snapshot = WearState.read(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(26), dp(28), dp(26))
+        }
+        panel.addView(summaryText("SHIFT SUMMARY", 12f, Color.rgb(35, 161, 255), true))
+        if (snapshot == null || snapshot.disconnected || !snapshot.active) {
+            panel.addView(summaryText(if (snapshot?.disconnected != false) "PHONE DISCONNECTED" else "NO ACTIVE SHIFT", 18f, Color.WHITE, true), rowParams(12))
+        } else {
+            panel.addView(summaryText("${snapshot.runs} runs · ${snapshot.deliveries} deliveries", 17f, Color.WHITE, true), rowParams(7))
+            panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.duration(snapshot.paidTimeSeconds)))
+            panel.addView(summaryRow("BREAK", WearDisplayPolicy.duration(snapshot.breakTimeSeconds)))
+            panel.addView(summaryRow("WAGES", snapshot.pay.ifBlank { "—" }))
+            panel.addView(summaryRow("DELIVERIES", snapshot.deliveryReimbursement.ifBlank { "—" }))
+            panel.addView(summaryRow("TOTAL", snapshot.shiftTotal.ifBlank { snapshot.pay.ifBlank { "—" } }, true))
+            if (snapshot.miles.isNotBlank()) panel.addView(summaryRow("MILES", snapshot.miles))
+            if ("undo_delivered" in snapshot.actions) panel.addView(summaryAction("UNDO DELIVERED", Color.rgb(76, 85, 96)) {
+                confirmAction("Undo last Delivered?", "This corrects the current delivery count.", "undo_delivered")
+            }, rowParams(9))
+            if ("cancel_delivery" in snapshot.actions) panel.addView(summaryAction("CANCEL DELIVERY", Color.rgb(147, 43, 59)) {
+                confirmAction("Cancel this delivery?", "Only use this for an accidental start.", "cancel_delivery")
+            }, rowParams(7))
+        }
+        panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(12))
+        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun summaryText(value: String, size: Float, colour: Int, bold: Boolean) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(colour)
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+
+    private fun rowParams(top: Int) = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(top) }
+
+    private fun summaryRow(label: String, value: String, highlight: Boolean = false) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(13), dp(8), dp(13), dp(8))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(16).toFloat()
+            setColor(if (highlight) Color.rgb(17, 65, 83) else Color.rgb(28, 28, 30))
+            setStroke(dp(1), if (highlight) Color.rgb(35, 161, 255) else Color.rgb(65, 65, 68))
+        }
+        addView(summaryText(label, 10f, Color.rgb(190, 187, 180), true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(summaryText(value, 13f, Color.WHITE, true))
+    }.also { it.layoutParams = rowParams(5) }
+
+    private fun summaryAction(label: String, colour: Int, action: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 11f
+        gravity = Gravity.CENTER
+        setTextColor(Color.WHITE)
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding(dp(8), dp(11), dp(8), dp(11))
+        background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(colour) }
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { action() }
+    }
+
+    private fun confirmAction(title: String, message: String, action: String) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setNegativeButton("Keep") { dialog, _ -> dialog.dismiss() }
+            .setPositiveButton("Confirm") { _, _ ->
+                WearTransport.sendAction(this, action)
+                resync()
+                showSummary()
+            }
+            .show()
     }
 
     private fun infoButton() = FrameLayout(this).apply {
@@ -240,8 +330,12 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     }
 
     private fun render() {
-        if (showingInfo) {
+        if (screen == Screen.INFO) {
             showInfo()
+            return
+        }
+        if (screen == Screen.SUMMARY) {
+            showSummary()
             return
         }
         val snapshot = WearState.read(this)
@@ -318,7 +412,11 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             "DELIVERED ${(snapshot.deliveredCustomers + 1).coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
         } else "DELIVERED"
 
-        listOf(
+        val resumeChoice = "resume_task" in snapshot.actions || "dismiss_resume" in snapshot.actions
+        val availableActions = if (resumeChoice) listOf(
+            "resume_task" to "RESUME",
+            "dismiss_resume" to "LEAVE PAUSED",
+        ) else listOf(
             "delivered" to deliveredLabel,
             "back_at_store" to "BACK AT STORE",
             "end_break" to "END BREAK",
@@ -326,11 +424,13 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             "single" to "SINGLE",
             "double" to "DOUBLE",
             "break" to "BREAK",
-        ).filter { it.first in snapshot.actions }.forEach { (action, label) ->
+        )
+        availableActions.filter { it.first in snapshot.actions }.forEach { (action, label) ->
             actions.addView(actionButton(label, action, when {
                 action == "single" || action == "delivered" && snapshot.activity == "delivery_single" -> Color.rgb(239, 29, 69)
                 action == "double" || action == "delivered" -> Color.rgb(8, 117, 209)
                 action == "break" || action == "end_break" -> Color.rgb(224, 163, 56)
+                action == "dismiss_resume" -> Color.rgb(76, 85, 96)
                 else -> Color.rgb(28, 157, 130)
             }, pending))
         }

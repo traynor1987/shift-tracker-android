@@ -19,7 +19,7 @@ object WearDisplayPolicy {
 
     fun contextLine(snapshot: WearSnapshot, storeLabel: String): String {
         val delivery = snapshot.activity.startsWith("delivery_")
-        if (!delivery) return ""
+        if (!delivery) return snapshot.pausedTaskName.takeIf { it.isNotBlank() }?.let { "PAUSED: $it\nResume it?" }.orEmpty()
         val parts = mutableListOf<String>()
         if (snapshot.earlyDispatchGapSeconds > 0) {
             parts += "EARLY ${duration(snapshot.earlyDispatchGapSeconds.toLong())}"
@@ -33,5 +33,18 @@ object WearDisplayPolicy {
         val firstLine = parts.joinToString(" · ")
         val paused = snapshot.pausedTaskName.takeIf { it.isNotBlank() }?.let { "PAUSED: $it" }.orEmpty()
         return listOf(firstLine, paused).filter { it.isNotBlank() }.joinToString("\n")
+    }
+
+    /** Only alert for a transition within the same live delivery. Reconnects
+     * and replacement snapshots must never invent a geofence vibration. */
+    fun geofenceTransition(previous: WearSnapshot?, next: WearSnapshot): String? {
+        if (previous == null || !previous.active || !next.active) return null
+        if (previous.shiftId != next.shiftId || previous.activityId != next.activityId) return null
+        if (!previous.activity.startsWith("delivery_") || !next.activity.startsWith("delivery_")) return null
+        return when {
+            previous.storeEntryAt <= 0L && next.storeEntryAt > 0L -> "returned"
+            previous.storeExitAt <= 0L && next.storeExitAt > 0L -> "left_store"
+            else -> null
+        }
     }
 }

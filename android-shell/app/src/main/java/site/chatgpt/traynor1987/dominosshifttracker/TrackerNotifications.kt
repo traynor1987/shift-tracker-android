@@ -100,7 +100,7 @@ object TrackerNotifications {
         if (startedAt > 0L) builder.setWhen(startedAt).setUsesChronometer(true).setChronometerCountDown(false)
         if (snapshot.settings.notificationActions) {
             val labels = mapOf("delivered" to "Delivered", "back_at_store" to "Back at Store", "end_break" to "End Break", "complete_task" to "Complete Task", "single" to "Single", "double" to "Double")
-            snapshot.allowedActions.take(2).forEachIndexed { index, action -> labels[action]?.let { builder.addAction(0, it, NativeShiftState.actionPendingIntent(context, action, 4100 + index)) } }
+            snapshot.allowedActions.filter { it in labels }.take(2).forEachIndexed { index, action -> labels[action]?.let { builder.addAction(0, it, NativeShiftState.actionPendingIntent(context, action, 4100 + index)) } }
         }
         manager(context).notify(LIVE_SHIFT_NOTIFICATION_ID, builder.build())
     }

@@ -8,7 +8,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import com.google.android.gms.wearable.Wearable
 import org.json.JSONObject
 
-data class WearSnapshot(val stateRevision: String, val shiftId: String, val activityId: String, val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val deliveredCustomers: Int, val requiredCustomers: Int, val earlyDispatchGapSeconds: Int, val storeExitAt: Long, val storeEntryAt: Long, val pausedTaskName: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
+data class WearSnapshot(val stateRevision: String, val shiftId: String, val activityId: String, val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val paidTimeSeconds: Long, val breakTimeSeconds: Long, val deliveryReimbursement: String, val shiftTotal: String, val miles: String, val runs: Int, val deliveredCustomers: Int, val requiredCustomers: Int, val earlyDispatchGapSeconds: Int, val storeExitAt: Long, val storeEntryAt: Long, val pausedTaskName: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
     val disconnected: Boolean get() = WearReliabilityPolicy.stateIsDisconnected(updatedAt)
 }
 
@@ -23,7 +23,12 @@ object WearState {
     const val STATE_PATH = "/shift-tracker/state"; const val ACTION_PATH = "/shift-tracker/action"; const val REQUEST_PATH = "/shift-tracker/request-state"; const val RESULT_PATH = "/shift-tracker/action-result"; const val OPEN_PHONE_PATH = "/shift-tracker/open-phone"
     private const val PREFS = "shift_tracker_wear_mirror_v1"; private const val KEY = "snapshot"; private const val ACTION_KEY = "action_feedback"
     fun read(context: Context): WearSnapshot? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)?.let { parse(it) }
-    fun save(context: Context, raw: String) { if (parse(raw) != null) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply() }
+    fun save(context: Context, raw: String) {
+        val next = parse(raw) ?: return
+        val previous = read(context)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
+        WearTransitionAlerts.notify(context, previous, next)
+    }
     fun readActionFeedback(context: Context): WearActionFeedback? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ACTION_KEY, null)?.let { raw -> runCatching {
         val value = JSONObject(raw)
         WearActionFeedback(value.optString("id"), value.optString("action"), value.optString("outcome"), value.optLong("updatedAt"))
@@ -56,6 +61,12 @@ object WearState {
             .put("activityName", "")
             .put("deliveries", 0)
             .put("estimatedPay", "")
+            .put("paidTimeSeconds", 0)
+            .put("breakTimeSeconds", 0)
+            .put("deliveryReimbursement", "")
+            .put("shiftTotal", "")
+            .put("miles", "")
+            .put("runs", 0)
             .put("deliveredCustomers", 0)
             .put("requiredCustomers", 0)
             .put("earlyDispatchGapSeconds", 0)
@@ -68,7 +79,7 @@ object WearState {
             .toString())
     }
     private fun parse(raw: String): WearSnapshot? = runCatching {
-        val o = JSONObject(raw); WearSnapshot(o.optString("stateRevision"), o.optString("shiftId"), o.optString("activityId"), o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optInt("deliveredCustomers"), o.optInt("requiredCustomers"), o.optInt("earlyDispatchGapSeconds"), o.optLong("storeExitAtEpochMs"), o.optLong("storeEntryAtEpochMs"), o.optString("pausedTaskName"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
+        val o = JSONObject(raw); WearSnapshot(o.optString("stateRevision"), o.optString("shiftId"), o.optString("activityId"), o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optLong("paidTimeSeconds"), o.optLong("breakTimeSeconds"), o.optString("deliveryReimbursement"), o.optString("shiftTotal"), o.optString("miles"), o.optInt("runs"), o.optInt("deliveredCustomers"), o.optInt("requiredCustomers"), o.optInt("earlyDispatchGapSeconds"), o.optLong("storeExitAtEpochMs"), o.optLong("storeEntryAtEpochMs"), o.optString("pausedTaskName"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
     }.getOrNull()
 }
 
