@@ -1,3 +1,9 @@
+# Wear 2.2.53 — stable scrolling and main-screen polish
+
+Settings and same-page refreshes retain their ScrollView and restore position inside onLayout before drawing. Removes posted top-of-page flashes and cancels pressed child controls before swipe navigation. Soft dim timeout applies only on Main (native ambient still follows system settings).
+
+Main uses a compact tappable settings logo, bolder timer, one subtle outline, reduced button borders/shadows, no extra connecting arc, and no duplicated idle At Store label. Delivery action sizes/positions, red Single/blue Double semantics and business logic stay intact. Physical small round-screen, scroll and wake testing remains required.
+
 # Wear 2.2.52 — break target, watch status and shift goals
 
 Adds configurable break countdown (default 30 min), one vibration per break/target, optional precise alarm access with inexact fallback, cancellation on canonical break end, and alarm identity/late/duplicate checks. Break completion is always manual. A disconnected watch cannot know about an unseen phone-side break end; current mirrored state remains the basis. Device reboot requires reopening/syncing the app to restore pending alerts.

@@ -62,19 +62,6 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
         setMeasuredDimension(measuredWidth, measuredHeight)
     }
 
-    override fun onDraw(canvas: Canvas) {
-        if (childCount == 0) return
-        val radius = min(width, height) * .34f
-        val centerX = width / 2f
-        val centerY = height * .44f
-        val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(2f)
-        paint.color = Color.argb(135, 36, 161, 255)
-        canvas.drawArc(arc, 35f, 110f, false, paint)
-        paint.style = Paint.Style.FILL
-    }
-
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         val count = childCount
         if (count == 0) return

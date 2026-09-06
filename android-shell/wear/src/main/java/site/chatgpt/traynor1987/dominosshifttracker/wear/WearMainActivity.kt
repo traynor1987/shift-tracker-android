@@ -70,7 +70,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
     }
     private val dimTask = Runnable {
-        if (WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this) && WearState.read(this)?.active == true) enterDim()
+        if (screen == Screen.MAIN && WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this) && WearState.read(this)?.active == true) enterDim()
     }
     private val ambientObserver by lazy {
         AmbientLifecycleObserver(this, object : AmbientLifecycleObserver.AmbientLifecycleCallback {
@@ -141,8 +141,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         root.removeAllViews()
         if (screen == Screen.MAIN) root.addView(main)
         render()
-        val scroll = activeScrollView
-        scroll?.post { if (activeScrollView === scroll) scroll.scrollTo(0, restoreScroll) }
+        (activeScrollView as? WearPageScrollView)?.restoreBeforeDraw(restoreScroll)
         scheduleDim()
         return true
     }
@@ -241,7 +240,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(26), dp(10), dp(26), 0)
+            setPadding(dp(26), dp(12), dp(26), 0)
         }
         fun text(size: Float, colour: Int) = TextView(this).apply {
             textSize = size
@@ -251,13 +250,16 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         panel.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_shift_tracker)
-            contentDescription = "Shift Tracker"
-        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { bottomMargin = dp(1) })
-        panel.addView(text(10f, Color.rgb(35, 161, 255)).apply { this.text = "SHIFT TRACKER" })
+            contentDescription = "Shift Tracker settings"
+            setPadding(dp(12), 0, dp(12), 0)
+            isClickable = true; isFocusable = true
+            setOnClickListener { showInfo() }
+        }, LinearLayout.LayoutParams(dp(48), dp(24)).apply { bottomMargin = dp(4) })
         state = text(17f, Color.WHITE)
         panel.addView(state)
         timer = Chronometer(this).apply {
-            textSize = 31f
+            textSize = 32f
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             includeFontPadding = false
@@ -276,10 +278,6 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
 
         actions = ArcActionLayout(this)
         main.addView(actions, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        main.addView(infoButton(), FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
-            topMargin = dp(28)
-            rightMargin = dp(48)
-        })
         setContentView(root)
     }
 
@@ -302,6 +300,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
                 val horizontal = event.x - swipeStartX
                 val vertical = event.y - swipeStartY
                 if (abs(horizontal) > dp(55) && abs(horizontal) > abs(vertical) * 1.2f) {
+                    val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                    super.dispatchTouchEvent(cancel)
+                    cancel.recycle()
                     when (screen) {
                         Screen.MAIN -> if (horizontal > 0) showInfo() else showSummary()
                         Screen.SUMMARY -> if (horizontal > 0) showMain() else Unit
@@ -326,11 +327,26 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         return super.onGenericMotionEvent(event)
     }
 
+    private fun presentPage(next: Screen, panel: LinearLayout) {
+        val previous = activeScrollView as? WearPageScrollView
+        val reuse = screen == next && previous?.parent === root
+        val position = if (screen == next) previous?.scrollY ?: 0 else 0
+        val scroll = if (reuse) requireNotNull(previous) else WearPageScrollView(this).apply {
+            isFocusable = true
+            setBackgroundColor(Color.BLACK)
+        }
+        scroll.replaceContent(panel, position)
+        if (!reuse) {
+            root.removeAllViews()
+            root.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        screen = next
+        activeScrollView = scroll
+    }
+
     private fun showInfo() {
-        screen = Screen.INFO
         root.keepScreenOn = false
         timer.stop()
-        root.removeAllViews()
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -412,8 +428,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         panel.addView(text(12f, Color.rgb(222, 218, 210)).apply {
             this.text = "ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
-        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
-        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        presentPage(Screen.INFO, panel)
     }
 
     private fun showMain() {
@@ -426,10 +441,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     private fun showSummary() {
-        screen = Screen.SUMMARY
         root.keepScreenOn = false
         timer.stop()
-        root.removeAllViews()
         val snapshot = WearState.read(this)
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -494,15 +507,12 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         snapshot?.let { panel.addView(summaryText(WearDisplayPolicy.syncAgeLabel(it.updatedAt), 10f, Color.rgb(170, 168, 164), false), rowParams(10)) }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(12))
-        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
-        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        presentPage(Screen.SUMMARY, panel)
     }
 
     private fun showQuickTasks() {
-        screen = Screen.TASKS
         root.keepScreenOn = false
         timer.stop()
-        root.removeAllViews()
         val snapshot = WearState.read(this)
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -543,8 +553,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             }
         }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(14))
-        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
-        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        presentPage(Screen.TASKS, panel)
     }
 
     private fun goalProgress(percent: Int) = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -607,27 +616,6 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             .show()
     }
 
-    private fun infoButton() = FrameLayout(this).apply {
-        contentDescription = "Settings and About"
-        isClickable = true
-        isFocusable = true
-        addView(TextView(this@WearMainActivity).apply {
-            text = "i"
-            textSize = 13f
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            isDuplicateParentStateEnabled = true
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(35, 35, 38))
-                setStroke(dp(1), Color.rgb(90, 170, 235))
-            }
-        }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
-        setOnClickListener { showInfo() }
-    }
-
     private fun settingsButton() = Button(this).apply {
         text = "APP SETTINGS"
         textSize = 13f
@@ -665,15 +653,12 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             return
         }
         if (screen != Screen.MAIN) {
-            val position = activeScrollView?.scrollY ?: 0
             when (screen) {
                 Screen.INFO -> showInfo()
                 Screen.SUMMARY -> showSummary()
                 Screen.TASKS -> showQuickTasks()
                 else -> Unit
             }
-            val scroll = activeScrollView
-            scroll?.post { if (activeScrollView === scroll) scroll.scrollTo(0, position) }
             return
         }
         val snapshot = WearState.read(this)
@@ -728,7 +713,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         dial.accent = colour
         dial.progress = if (delivery) .72f else .5f
         state.setTextColor(colour)
-        state.textSize = if (delivery) 16f else 17f
+        state.textSize = 15f
+        state.setTypeface(state.typeface, Typeface.BOLD)
         state.text = WearDisplayPolicy.activityTitle(snapshot.activity)
         val start = if (snapshot.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
         val now = System.currentTimeMillis()
@@ -757,7 +743,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             "CUSTOMER ${snapshot.deliveredCustomers.coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
         } else ""
         val earnings = if (WearPreferences.showEarnings(this)) " • ${snapshot.pay}" else ""
-        detail.text = "${snapshot.deliveries} deliveries$earnings${if (!delivery && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
+        detail.text = "${snapshot.deliveries} deliveries$earnings${if (!delivery && snapshot.activity != "idle" && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
         contextDetail.text = if (snapshot.activity == "break") "${WearGoals.breakMinutes(this)} MIN TARGET · END MANUALLY" else WearDisplayPolicy.contextLine(snapshot, where)
 
         val deliveredLabel = if (snapshot.requiredCustomers > 1) {
@@ -818,9 +804,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         background = GradientDrawable().apply {
             cornerRadius = dp(30).toFloat()
             setColor(colour)
-            setStroke(dp(2), Color.argb(210, 255, 255, 255))
+            setStroke(dp(1), Color.argb(100, 255, 255, 255))
         }
-        elevation = dp(5).toFloat()
+        elevation = 0f
         setOnClickListener {
             isEnabled = false
             actionStatus.text = "SENDING TO PHONE…"
@@ -840,9 +826,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         background = GradientDrawable().apply {
             cornerRadius = dp(30).toFloat()
             setColor(Color.rgb(8, 117, 209))
-            setStroke(dp(2), Color.argb(210, 255, 255, 255))
+            setStroke(dp(1), Color.argb(100, 255, 255, 255))
         }
-        elevation = dp(5).toFloat()
+        elevation = 0f
         setOnClickListener {
             detail.text = "Opening Shift Tracker on phone…"
             WearTransport.openPhone(this@WearMainActivity)
