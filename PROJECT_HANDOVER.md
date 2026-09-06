@@ -1,3 +1,12 @@
+# Wear / Android 2.2.49 — 6 September 2026
+
+- Baseline: f97ba9b (2.2.48). Recent runs are now scoped to the active shift; legacy unscoped cache is hidden and cleared on the next snapshot. Phone history is untouched.
+- Watch Back returns Tasks -> Summary -> Main; at Main it stays in the app.
+- Watch update page shows waiting, actual received-byte percentage, verification, ready/install and failure/expired state. Back to Tracker defers the prompt for that transfer; Settings -> Watch Update reopens it. Notifications remain a fallback.
+- Phone uses AndroidX RemoteActivityHelper to request opening the watch update deep link after sending metadata. Launch is best effort and never blocks transfer. The exported deep link displays local verified state only; it cannot initiate installation or ingest metadata.
+- Both devices need 2.2.49 for the complete new flow; initial upgrade uses the previously installed receiver.
+- Existing package/signing identity, hash/signature checks and system install confirmation remain. Tests cover shift cache boundaries and stale transfer state. Physical watch Back, remote launch, interruption and installer checks are still needed.
+
 # Wear 2.2.48 — 6 September 2026
 
 Source baseline: GitHub main `302f82be999d25867fa485ca1cde1aa09ce0365a` (2.2.47), recovered directly through the GitHub connector. Historical 2.2.9 archive was not used.

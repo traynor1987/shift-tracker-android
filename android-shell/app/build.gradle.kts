@@ -32,8 +32,8 @@ android {
         targetSdk = 35
         // versionCode is the authoritative Android update comparator. Keep it
         // ahead of the public 2.2.22 / 27 production APK.
-        versionCode = 53
-        versionName = "2.2.48"
+        versionCode = 54
+        versionName = "2.2.49"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 
@@ -77,6 +77,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.wear:wear-remote-interactions:1.0.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.15.0")

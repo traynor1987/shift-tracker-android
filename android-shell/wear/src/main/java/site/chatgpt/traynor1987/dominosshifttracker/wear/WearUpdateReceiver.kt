@@ -61,14 +61,20 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
             PREPARE -> {
                 val raw = event.data.toString(Charsets.UTF_8)
                 val meta = runCatching { JSONObject(raw) }.getOrNull() ?: return
+                if (receiving.get()) return
                 if (!validMetadata(meta)) {
                     WearUpdateStatus.send(this, event.sourceNodeId, "failed", "Wear update metadata was rejected")
                     return
                 }
+                getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE).getString("ready", null)?.let(::File)?.delete()
                 getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE).edit()
+                    .remove("ready").remove("ready_code")
                     .putString("meta", meta.toString())
                     .putString("source_node", event.sourceNodeId)
+                    .putString("transfer_token", meta.optString("token"))
+                    .putString("transfer_version", meta.optString("versionName"))
                     .apply()
+                WearUpdateUi.save(this, "waiting", 0)
             }
         }
     }
@@ -94,10 +100,12 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
         val meta = runCatching { JSONObject(prefs.getString("meta", null) ?: error("missing metadata")) }.getOrNull()
         val expectedNode = prefs.getString("source_node", null)
         if (meta == null || expectedNode != channel.nodeId || !validMetadata(meta)) {
+            WearUpdateUi.save(this, "failed", 0)
             WearUpdateStatus.send(this, channel.nodeId, "failed", "Wear update metadata was missing or expired")
             finishReceive(channel)
             return
         }
+        WearUpdateUi.save(this, "receiving", 0)
         WearUpdateStatus.send(this, channel.nodeId, "receiving", "Receiving verified Wear update…")
         val directory = File(cacheDir, "wear-update").apply { mkdirs() }
         val target = File(directory, meta.getString("apkFile"))
@@ -115,6 +123,7 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
                 require(JSONObject(header.toString(Charsets.UTF_8)).optString("token") == meta.getString("token"))
                 val digest = MessageDigest.getInstance("SHA-256")
                 var received = 0L
+                var reported = -1
                 FileOutputStream(part).use { output ->
                     val buffer = ByteArray(32_768)
                     while (true) {
@@ -124,12 +133,19 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
                         require(received <= expectedSize && received <= WearReliabilityPolicy.MAX_UPDATE_BYTES)
                         digest.update(buffer, 0, count)
                         output.write(buffer, 0, count)
+                        val percent = (received * 100 / expectedSize).toInt()
+                        if (percent != reported) {
+                            reported = percent
+                            WearUpdateUi.save(this, "receiving", percent)
+                            runCatching { NotificationManagerCompat.from(this).notify(RECEIVING_NOTIFICATION, receivingNotification(percent)) }
+                        }
                     }
                     output.fd.sync()
                 }
                 require(received == expectedSize)
                 require(hex(digest.digest()) == meta.getString("sha256"))
             }
+            WearUpdateUi.save(this, "verifying", 100)
             verifyArchive(part, meta.getLong("versionCode"))
             require(part.renameTo(target))
             prefs.getString("ready", null)?.let(::File)?.takeIf { it != target }?.delete()
@@ -138,9 +154,11 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
                 .putLong("ready_code", meta.getLong("versionCode"))
                 .remove("meta")
                 .apply()
-            notifyReady(meta.getString("versionName"))
+            WearUpdateUi.save(this, "ready", 100)
+            runCatching { notifyReady(meta.getString("versionName")) }
             WearUpdateStatus.send(this, channel.nodeId, "ready_to_install", "Wear update ready. Open the watch to install")
         } catch (_: Throwable) {
+            WearUpdateUi.save(this, "failed", 0)
             part.delete()
             target.delete()
             prefs.edit().remove("meta").apply()
@@ -192,12 +210,16 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
         }.toSet()
     } else emptySet()
 
-    private fun receivingNotification(): Notification {
+    private fun receivingNotification(percent: Int = 0): Notification {
         ensureNotificationChannel()
         return NotificationCompat.Builder(this, UPDATE_CHANNEL)
             .setSmallIcon(R.drawable.ic_shift_tracker)
             .setContentTitle("Receiving Shift Tracker update")
-            .setContentText("Keeping the secure watch transfer active")
+            .setContentText("$percent% received · Tap to view")
+            .setProgress(100, percent, false)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(PendingIntent.getActivity(this, RECEIVING_NOTIFICATION,
+                Intent(this, WearUpdateActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -239,78 +261,100 @@ object WearUpdateStatus {
     }
 }
 
-class WearUpdateActivity : android.app.Activity() {
-    private var returnedFromPermissionSettings = false
+object WearUpdateUi {
+    fun save(context: Context, state: String, percent: Int) {
+        context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putString("transfer_state", state).putInt("transfer_percent", percent.coerceIn(0, 100))
+            .putLong("transfer_updated", System.currentTimeMillis()).apply()
+    }
+    fun isVisible(context: Context): Boolean {
+        if (hasReadyWearUpdate(context)) return true
+        val p = context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+        return WearReliabilityPolicy.transferIsFresh(p.getString("transfer_state", ""), p.getLong("transfer_updated", 0))
+    }
+}
+
+/** A deep link opens status only. Installation always requires an explicit tap. */
+class WearUpdateActivity : androidx.activity.ComponentActivity() {
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val refresh = object : Runnable {
+        override fun run() { render(); handler.postDelayed(this, 1_000L) }
+    }
+    private lateinit var title: TextView
+    private lateinit var copy: TextView
+    private lateinit var progress: android.widget.ProgressBar
+    private lateinit var install: Button
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        showInstaller()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (returnedFromPermissionSettings) {
-            returnedFromPermissionSettings = false
-            showInstaller()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { returnToTracker() }
+        })
+        title = text(18f)
+        copy = text(14f)
+        progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        install = Button(this).apply { text = "INSTALL UPDATE"; setOnClickListener { installUpdate() } }
+        val later = Button(this).apply { text = "BACK TO TRACKER"; setOnClickListener {
+            returnToTracker()
+        } }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(34), dp(28), dp(34)); setBackgroundColor(Color.BLACK)
+            addView(title); addView(copy)
+            addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(18)))
+            addView(install, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(later, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        setContentView(android.widget.ScrollView(this).apply { addView(panel) })
     }
-
-    private fun showInstaller() {
+    override fun onResume() { super.onResume(); handler.post(refresh) }
+    override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
+    private fun returnToTracker() {
         val prefs = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
-        val file = prefs.getString("ready", null)?.let(::File)
-        if (file?.isFile != true) {
-            finish()
+        prefs.edit().putString("dismissed_token", prefs.getString("transfer_token", "")).apply()
+        startActivity(Intent(this, WearMainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        finish()
+    }
+    private fun render() {
+        val prefs = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
+        val ready = hasReadyWearUpdate(this)
+        val state = prefs.getString("transfer_state", "")
+        val percent = prefs.getInt("transfer_percent", 0).coerceIn(0, 100)
+        val fresh = WearUpdateUi.isVisible(this)
+        title.text = "WATCH UPDATE"
+        copy.text = when {
+            ready -> "Version ${prefs.getString("transfer_version", "")} is verified.\nDo you want to update?"
+            state == "failed" -> "Transfer failed. Retry from your phone."
+            !fresh -> "No active transfer. Send the update from your phone."
+            state == "verifying" -> "Received 100%\nVerifying update…"
+            state == "receiving" -> "Receiving update\n$percent%"
+            else -> "Waiting for phone…"
+        }
+        progress.visibility = if (fresh && !ready) android.view.View.VISIBLE else android.view.View.GONE
+        progress.isIndeterminate = state != "receiving"
+        progress.progress = percent
+        install.visibility = if (ready) android.view.View.VISIBLE else android.view.View.GONE
+        install.text = if (!packageManager.canRequestPackageInstalls()) "ALLOW INSTALLS" else "INSTALL UPDATE"
+    }
+    private fun installUpdate() {
+        if (!hasReadyWearUpdate(this)) { render(); return }
+        val prefs = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
+        val node = prefs.getString("source_node", null)
+        if (!packageManager.canRequestPackageInstalls()) {
+            WearUpdateStatus.send(this, node, "install_permission_required", "Allow watch installs, then return to Shift Tracker")
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
             return
         }
-        val padding = dp(18)
-        val title = TextView(this).apply {
-            text = "Shift Tracker update"
-            setTextColor(Color.WHITE)
-            textSize = 20f
-            gravity = Gravity.CENTER
-            setPadding(0, padding, 0, padding / 2)
-        }
-        val copy = TextView(this).apply {
-            text = if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls())
-                "Allow installs from Shift Tracker, then return here."
-            else "The verified update is ready.\nTap Install to continue."
-            setTextColor(Color.LTGRAY)
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, padding)
-        }
-        val button = Button(this).apply {
-            text = if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) "ALLOW INSTALLS" else "INSTALL UPDATE"
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(0, 112, 210))
-            setOnClickListener {
-                val node = prefs.getString("source_node", null)
-                if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
-                    WearUpdateStatus.send(this@WearUpdateActivity, node, "install_permission_required", "Allow watch installs, then return to Shift Tracker")
-                    returnedFromPermissionSettings = true
-                    startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-                    return@setOnClickListener
-                }
-                runCatching {
-                    val uri = FileProvider.getUriForFile(this@WearUpdateActivity, "$packageName.fileprovider", file)
-                    WearUpdateStatus.send(this@WearUpdateActivity, node, "installer_opened", "Watch installer opened")
-                    startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                }.onFailure {
-                    WearUpdateStatus.send(this@WearUpdateActivity, node, "failed", "Watch installer could not be opened")
-                }
-            }
-        }
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(padding, padding, padding, padding)
-            setBackgroundColor(Color.rgb(18, 18, 18))
-            addView(title)
-            addView(copy)
-            addView(button, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
-        })
+        runCatching {
+            val file = File(requireNotNull(prefs.getString("ready", null)))
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            WearUpdateStatus.send(this, node, "installer_opened", "Watch installer opened")
+        }.onFailure { WearUpdateStatus.send(this, node, "failed", "Watch installer could not be opened") }
     }
-
+    private fun text(size: Float) = TextView(this).apply {
+        textSize = size; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(10))
+    }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 }
 

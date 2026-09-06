@@ -5,6 +5,22 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WearReliabilityPolicyTest {
+    @Test fun newShiftAndLegacyCacheCannotShowOldRuns() {
+        assertTrue(WearReliabilityPolicy.recentRunsBelongToShift(true, "shift-B", "shift-B"))
+        assertFalse(WearReliabilityPolicy.recentRunsBelongToShift(true, "shift-B", "shift-A"))
+        assertFalse(WearReliabilityPolicy.recentRunsBelongToShift(true, "shift-B", null))
+        assertFalse(WearReliabilityPolicy.recentRunsBelongToShift(false, "shift-B", "shift-B"))
+        assertFalse(WearReliabilityPolicy.recentRunsBelongToShift(true, "", ""))
+    }
+
+    @Test fun interruptedTransferCannotShowReceivingForever() {
+        assertTrue(WearReliabilityPolicy.transferIsFresh("receiving", 999_000, 1_000_000))
+        assertFalse(WearReliabilityPolicy.transferIsFresh("receiving", 800_000, 1_000_000))
+        assertFalse(WearReliabilityPolicy.transferIsFresh("waiting", 0, 1_000_000))
+        assertFalse(WearReliabilityPolicy.transferIsFresh("ready", 999_000, 1_000_000))
+        assertFalse(WearReliabilityPolicy.transferIsFresh("verifying", 1_000_001, 1_000_000))
+    }
+
     @Test fun recentStateIsConnected() {
         assertFalse(WearReliabilityPolicy.stateIsDisconnected(900_001L, 1_000_000L))
     }

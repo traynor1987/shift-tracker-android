@@ -35,7 +35,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlin.math.abs
 
-class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
+class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
     private enum class Screen { MAIN, SUMMARY, TASKS, INFO }
 
     private lateinit var root: FrameLayout
@@ -57,20 +57,44 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         build()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when (screen) {
+                    Screen.TASKS -> showSummary()
+                    Screen.SUMMARY, Screen.INFO -> showMain()
+                    Screen.MAIN -> Unit
+                }
+            }
+        })
         request()
         render()
+    }
+
+    private var shownUpdate = ""
+    private val updateListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        runOnUiThread { openPendingUpdate() }
+    }
+    private fun openPendingUpdate() {
+        val prefs = getSharedPreferences("wear_update", MODE_PRIVATE)
+        val token = prefs.getString("transfer_token", "").orEmpty()
+        if (WearUpdateUi.isVisible(this) && token != shownUpdate && token != prefs.getString("dismissed_token", null)) {
+            shownUpdate = token
+            startActivity(Intent(this, WearUpdateActivity::class.java))
+        }
     }
 
     override fun onResume() {
         super.onResume()
         Wearable.getDataClient(this).addListener(this)
         Wearable.getMessageClient(this).addListener(this)
-        if (hasReadyWearUpdate(this)) startActivity(Intent(this, WearUpdateActivity::class.java))
+        getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
+        openPendingUpdate()
         request()
         render()
     }
 
     override fun onPause() {
+        getSharedPreferences("wear_update", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(updateListener)
         Wearable.getDataClient(this).removeListener(this)
         Wearable.getMessageClient(this).removeListener(this)
         handler.removeCallbacksAndMessages(null)
@@ -226,6 +250,9 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         if (!connected) panel.addView(summaryAction("OPEN PHONE", Color.rgb(76, 85, 96)) {
             WearTransport.openPhone(this)
         }, rowParams(6))
+        if (WearUpdateUi.isVisible(this)) panel.addView(summaryAction("WATCH UPDATE", Color.rgb(8, 117, 209)) {
+            startActivity(Intent(this, WearUpdateActivity::class.java))
+        }, rowParams(8))
         panel.addView(settingsButton(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
         val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         panel.addView(text(12f, Color.rgb(222, 218, 210)).apply {

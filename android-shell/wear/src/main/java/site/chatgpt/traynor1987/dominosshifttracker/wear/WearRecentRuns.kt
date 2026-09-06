@@ -19,6 +19,11 @@ object WearRecentRuns {
     private const val MAX_RUNS = 5
 
     fun capture(context: Context, previous: WearSnapshot?, next: WearSnapshot) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!WearReliabilityPolicy.recentRunsBelongToShift(next.active, next.shiftId, prefs.getString("shift_id", null))) {
+            prefs.edit().remove(KEY).putString("shift_id", next.shiftId).apply()
+        }
+        if (!next.active || next.shiftId.isBlank()) return
         if (previous == null || previous.shiftId != next.shiftId || previous.activityId.isBlank()) return
         if (!previous.activity.startsWith("delivery_")) return
         if (next.activityId == previous.activityId && next.activity.startsWith("delivery_")) return
@@ -37,7 +42,10 @@ object WearRecentRuns {
     }
 
     fun read(context: Context): List<WearRecentRun> = runCatching {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val current = WearState.read(context) ?: return emptyList()
+        if (!WearReliabilityPolicy.recentRunsBelongToShift(current.active, current.shiftId, prefs.getString("shift_id", null))) return emptyList()
+        val raw = prefs.getString(KEY, null) ?: return emptyList()
         val array = JSONArray(raw)
         buildList {
             for (index in 0 until minOf(array.length(), MAX_RUNS)) {
