@@ -30,6 +30,7 @@ object WearState {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
         WearRecentRuns.capture(context, previous, next)
         WearTransitionAlerts.notify(context, previous, next)
+        WearComplicationRefresh.request(context)
     }
     fun readActionFeedback(context: Context): WearActionFeedback? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ACTION_KEY, null)?.let { raw -> runCatching {
         val value = JSONObject(raw)

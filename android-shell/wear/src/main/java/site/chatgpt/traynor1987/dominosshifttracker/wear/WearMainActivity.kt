@@ -15,8 +15,10 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.widget.Button
 import android.widget.Chronometer
 import android.widget.FrameLayout
@@ -49,6 +51,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var lastFeedbackOutcome = ""
+    private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -172,6 +175,15 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         return super.dispatchTouchEvent(event)
     }
 
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_SCROLL && event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)) {
+            val distance = -event.getAxisValue(MotionEvent.AXIS_SCROLL) * ViewConfiguration.get(this).scaledVerticalScrollFactor
+            activeScrollView?.scrollBy(0, distance.toInt())
+            return activeScrollView != null
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
     private fun showInfo() {
         screen = Screen.INFO
         root.keepScreenOn = false
@@ -205,19 +217,28 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             WearPreferences.toggleKeepAwake(this); showInfo()
         }, rowParams(5))
         panel.addView(preferenceButton("SHOW EARNINGS", WearPreferences.showEarnings(this)) {
-            WearPreferences.toggleShowEarnings(this); showInfo(); WearTileRefresh.request(this)
+            WearPreferences.toggleShowEarnings(this); showInfo(); WearTileRefresh.request(this); WearComplicationRefresh.request(this)
         }, rowParams(5))
+        panel.addView(summaryAction("SYNC NOW", Color.rgb(8, 117, 209)) {
+            request()
+            handler.postDelayed({ showInfo() }, 900L)
+        }, rowParams(10))
+        if (!connected) panel.addView(summaryAction("OPEN PHONE", Color.rgb(76, 85, 96)) {
+            WearTransport.openPhone(this)
+        }, rowParams(6))
         panel.addView(settingsButton(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
         val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         panel.addView(text(12f, Color.rgb(222, 218, 210)).apply {
             this.text = "ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
-        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
+        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun showMain() {
         if (screen == Screen.MAIN) return
         screen = Screen.MAIN
+        activeScrollView = null
         root.removeAllViews()
         root.addView(main)
         render()
@@ -267,7 +288,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         }
         snapshot?.let { panel.addView(summaryText(WearDisplayPolicy.syncAgeLabel(it.updatedAt), 10f, Color.rgb(170, 168, 164), false), rowParams(10)) }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(12))
-        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
+        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun showQuickTasks() {
@@ -306,7 +328,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             }
         }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(14))
-        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
+        root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun summaryText(value: String, size: Float, colour: Int, bold: Boolean) = TextView(this).apply {
