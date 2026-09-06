@@ -7,8 +7,9 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import com.google.android.gms.wearable.Wearable
 import org.json.JSONObject
+import org.json.JSONArray
 
-data class WearSnapshot(val stateRevision: String, val shiftId: String, val activityId: String, val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val paidTimeSeconds: Long, val breakTimeSeconds: Long, val deliveryReimbursement: String, val shiftTotal: String, val miles: String, val runs: Int, val deliveredCustomers: Int, val requiredCustomers: Int, val earlyDispatchGapSeconds: Int, val storeExitAt: Long, val storeEntryAt: Long, val pausedTaskName: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
+data class WearSnapshot(val stateRevision: String, val shiftId: String, val activityId: String, val active: Boolean, val shiftStarted: Long, val activity: String, val name: String, val activityStarted: Long, val deliveries: Int, val pay: String, val paidTimeSeconds: Long, val breakTimeSeconds: Long, val deliveryReimbursement: String, val shiftTotal: String, val miles: String, val runs: Int, val quickTasks: List<String>, val deliveredCustomers: Int, val requiredCustomers: Int, val earlyDispatchGapSeconds: Int, val storeExitAt: Long, val storeEntryAt: Long, val pausedTaskName: String, val storeStatus: String, val actions: Set<String>, val updatedAt: Long) {
     val disconnected: Boolean get() = WearReliabilityPolicy.stateIsDisconnected(updatedAt)
 }
 
@@ -68,6 +69,7 @@ object WearState {
             .put("shiftTotal", "")
             .put("miles", "")
             .put("runs", 0)
+            .put("quickTasks", JSONArray())
             .put("deliveredCustomers", 0)
             .put("requiredCustomers", 0)
             .put("earlyDispatchGapSeconds", 0)
@@ -80,7 +82,9 @@ object WearState {
             .toString())
     }
     private fun parse(raw: String): WearSnapshot? = runCatching {
-        val o = JSONObject(raw); WearSnapshot(o.optString("stateRevision"), o.optString("shiftId"), o.optString("activityId"), o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optLong("paidTimeSeconds"), o.optLong("breakTimeSeconds"), o.optString("deliveryReimbursement"), o.optString("shiftTotal"), o.optString("miles"), o.optInt("runs"), o.optInt("deliveredCustomers"), o.optInt("requiredCustomers"), o.optInt("earlyDispatchGapSeconds"), o.optLong("storeExitAtEpochMs"), o.optLong("storeEntryAtEpochMs"), o.optString("pausedTaskName"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
+        val o = JSONObject(raw)
+        val quickTasks = buildList { o.optJSONArray("quickTasks")?.let { values -> for (index in 0 until values.length()) values.optString(index).takeIf { it.isNotBlank() }?.let(::add) } }
+        WearSnapshot(o.optString("stateRevision"), o.optString("shiftId"), o.optString("activityId"), o.optBoolean("shiftActive"), o.optLong("shiftStartedAtEpochMs"), o.optString("activity", "idle"), o.optString("activityName"), o.optLong("activityStartedAtEpochMs"), o.optInt("deliveries"), o.optString("estimatedPay"), o.optLong("paidTimeSeconds"), o.optLong("breakTimeSeconds"), o.optString("deliveryReimbursement"), o.optString("shiftTotal"), o.optString("miles"), o.optInt("runs"), quickTasks, o.optInt("deliveredCustomers"), o.optInt("requiredCustomers"), o.optInt("earlyDispatchGapSeconds"), o.optLong("storeExitAtEpochMs"), o.optLong("storeEntryAtEpochMs"), o.optString("pausedTaskName"), o.optString("storeStatus", "unknown"), o.optString("allowedActions").split(',').filter { it.isNotBlank() }.toSet(), o.optLong("updatedAtEpochMs"))
     }.getOrNull()
 }
 
@@ -108,7 +112,7 @@ class WearStateListenerService : WearableListenerService() {
 object WearTransport {
     /** Opens the paired phone app only; no delivery or shift action is sent. */
     fun openPhone(context: Context) { withBestNode(context, onMissing = {}) { id -> Wearable.getMessageClient(context).sendMessage(id, WearState.OPEN_PHONE_PATH, byteArrayOf()) } }
-    fun sendAction(context: Context, action: String): String? {
+    fun sendAction(context: Context, action: String, taskName: String? = null): String? {
         val state = WearState.read(context) ?: return null
         val id = "wear-${System.currentTimeMillis()}-$action"
         val payload = JSONObject()
@@ -117,10 +121,11 @@ object WearTransport {
             .put("expectedStateRevision", state.stateRevision)
             .put("expectedShiftId", state.shiftId)
             .put("expectedActivityId", state.activityId)
-            .toString().toByteArray()
+        taskName?.takeIf { it.isNotBlank() }?.let { payload.put("taskName", it.take(60)) }
+        val bytes = payload.toString().toByteArray()
         WearState.saveActionFeedback(context, id, action, "sending")
         withBestNode(context, onMissing = { WearState.saveActionFeedback(context, id, action, "not_connected") }) { nodeId ->
-            Wearable.getMessageClient(context).sendMessage(nodeId, WearState.ACTION_PATH, payload)
+            Wearable.getMessageClient(context).sendMessage(nodeId, WearState.ACTION_PATH, bytes)
                 .addOnFailureListener { WearState.saveActionFeedback(context, id, action, "send_failed") }
         }
         return id

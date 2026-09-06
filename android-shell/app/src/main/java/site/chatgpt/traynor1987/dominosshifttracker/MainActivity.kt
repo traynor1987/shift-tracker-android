@@ -380,14 +380,15 @@ class MainActivity : ComponentActivity() {
 
     private fun deliverPendingNativeAction() {
         val pending = NativeShiftState.peekPendingAction(this) ?: return
-        postNativeMessage(JSONObject()
+        val message = JSONObject()
             .put("type", "shift_tracker_native_action:requested")
             .put("id", pending.optString("id"))
             .put("action", pending.optString("action"))
             .put("expectedStateRevision", pending.optString("expectedStateRevision"))
             .put("expectedShiftId", pending.optString("expectedShiftId"))
             .put("expectedActivityId", pending.optString("expectedActivityId"))
-            .toString())
+        pending.optString("taskName").takeIf { it.isNotBlank() }?.let { message.put("taskName", it) }
+        postNativeMessage(message.toString())
     }
 
     private fun requestNativeWorkNotification(message: JSONObject) {

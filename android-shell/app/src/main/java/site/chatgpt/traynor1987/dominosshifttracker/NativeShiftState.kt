@@ -29,6 +29,7 @@ data class ShiftSnapshot(
     val shiftTotal: String,
     val miles: String,
     val runs: Int,
+    val quickTasks: List<String>,
     val deliveredCustomers: Int,
     val requiredCustomers: Int,
     val earlyDispatchGapSeconds: Int,
@@ -61,7 +62,7 @@ object NativeShiftState {
     private val ACTIVITIES = setOf("idle", "delivery_single", "delivery_double", "break", "cleaning", "prep", "task")
     private val ACTIONS = setOf(
         "delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break", "open",
-        "undo_delivered", "cancel_delivery", "resume_task", "dismiss_resume",
+        "undo_delivered", "cancel_delivery", "resume_task", "dismiss_resume", "start_quick_task", "finish_quick_tasks",
     )
 
     fun replace(context: Context, raw: JSONObject): ShiftSnapshot? {
@@ -109,6 +110,11 @@ object NativeShiftState {
         if (current != null && System.currentTimeMillis() - current.optLong("createdAt") < 4_000L) return "already_pending"
         val snapshot = read(context) ?: return "stale_state"
         if (snapshot.isStale || action !in snapshot.allowedActions) return "invalid_action"
+        val taskName = if (action == "start_quick_task") {
+            request.optString("taskName").trim().takeIf { requested ->
+                requested.length in 1..60 && snapshot.quickTasks.any { it.equals(requested, ignoreCase = true) }
+            } ?: return "invalid_action"
+        } else null
         val expectedRevision = request.optString("expectedStateRevision")
         val expectedShiftId = request.optString("expectedShiftId")
         val expectedActivityId = request.optString("expectedActivityId")
@@ -125,6 +131,7 @@ object NativeShiftState {
             .put("expectedShiftId", snapshot.shiftId)
             .put("expectedActivityId", snapshot.activityId)
             .put("sourceNodeId", sourceNodeId.take(160))
+        taskName?.let { payload.put("taskName", it) }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).apply()
         return "queued"
     }
@@ -182,6 +189,14 @@ object NativeShiftState {
         raw.optJSONArray("allowedActions")?.let { source ->
             for (index in 0 until minOf(source.length(), ACTIONS.size)) source.optString(index).takeIf { it in ACTIONS }?.let(actions::put)
         }
+        val quickTasks = JSONArray()
+        val seenQuickTasks = mutableSetOf<String>()
+        raw.optJSONArray("quickTasks")?.let { source ->
+            for (index in 0 until minOf(source.length(), 40)) {
+                val label = source.optString(index).trim().take(60)
+                if (label.isNotBlank() && seenQuickTasks.add(label.lowercase())) quickTasks.put(label)
+            }
+        }
         val inputSettings = raw.optJSONObject("settings") ?: JSONObject()
         val settings = JSONObject()
             .put("liveNotification", inputSettings.optBoolean("liveNotification", true))
@@ -207,6 +222,7 @@ object NativeShiftState {
             .put("shiftTotal", raw.optString("shiftTotal").trim().take(40))
             .put("miles", raw.optString("miles").trim().take(20))
             .put("runs", raw.optInt("runs", 0).coerceIn(0, 9999))
+            .put("quickTasks", quickTasks)
             .put("deliveredCustomers", raw.optInt("deliveredCustomers", 0).coerceIn(0, 4))
             .put("requiredCustomers", raw.optInt("requiredCustomers", 0).coerceIn(0, 4))
             .put("earlyDispatchGapSeconds", raw.optInt("earlyDispatchGapSeconds", 0).coerceIn(0, 1_800))
@@ -224,7 +240,8 @@ object NativeShiftState {
         if (activity !in ACTIVITIES) return null
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
-        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
+        val quickTasks = buildList { value.optJSONArray("quickTasks")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it.isNotBlank() }?.let(::add) } }
+        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), quickTasks, value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }

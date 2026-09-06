@@ -34,7 +34,7 @@ import com.google.android.gms.wearable.Wearable
 import kotlin.math.abs
 
 class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
-    private enum class Screen { MAIN, SUMMARY, INFO }
+    private enum class Screen { MAIN, SUMMARY, TASKS, INFO }
 
     private lateinit var root: FrameLayout
     private lateinit var main: FrameLayout
@@ -142,9 +142,9 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
 
         actions = ArcActionLayout(this)
         main.addView(actions, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        main.addView(infoButton(), FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply {
-            topMargin = dp(20)
-            rightMargin = dp(24)
+        main.addView(infoButton(), FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(28)
+            rightMargin = dp(48)
         })
         setContentView(root)
     }
@@ -162,6 +162,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                     when (screen) {
                         Screen.MAIN -> if (horizontal > 0) showInfo() else showSummary()
                         Screen.SUMMARY -> if (horizontal > 0) showMain() else Unit
+                        Screen.TASKS -> if (horizontal > 0) showSummary() else Unit
                         Screen.INFO -> if (horizontal < 0) showMain() else Unit
                     }
                     return true
@@ -246,6 +247,9 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 panel.addView(summaryRow("TOTAL", snapshot.shiftTotal.ifBlank { snapshot.pay.ifBlank { "—" } }, true))
             } else panel.addView(summaryRow("EARNINGS", "HIDDEN"))
             if (snapshot.miles.isNotBlank()) panel.addView(summaryRow("MILES", snapshot.miles))
+            if ("start_quick_task" in snapshot.actions || "finish_quick_tasks" in snapshot.actions) {
+                panel.addView(summaryAction("QUICK TASKS", Color.rgb(8, 117, 209)) { showQuickTasks() }, rowParams(9))
+            }
             val recentRuns = WearRecentRuns.read(this)
             if (recentRuns.isNotEmpty()) {
                 panel.addView(summaryText("RECENT RUNS", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
@@ -263,6 +267,45 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         }
         snapshot?.let { panel.addView(summaryText(WearDisplayPolicy.syncAgeLabel(it.updatedAt), 10f, Color.rgb(170, 168, 164), false), rowParams(10)) }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(12))
+        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun showQuickTasks() {
+        screen = Screen.TASKS
+        root.keepScreenOn = false
+        timer.stop()
+        root.removeAllViews()
+        val snapshot = WearState.read(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(26), dp(28), dp(26))
+        }
+        panel.addView(summaryText("QUICK TASKS", 13f, Color.rgb(35, 161, 255), true))
+        if (snapshot == null || snapshot.disconnected || !snapshot.active) {
+            panel.addView(summaryText("PHONE NOT READY", 17f, Color.WHITE, true), rowParams(12))
+        } else {
+            if ("finish_quick_tasks" in snapshot.actions) {
+                panel.addView(summaryAction("FINISH CURRENT TASKS", Color.rgb(28, 157, 130)) {
+                    WearTransport.sendAction(this, "finish_quick_tasks")
+                    showMain()
+                    resync()
+                }, rowParams(10))
+            }
+            if ("start_quick_task" in snapshot.actions && snapshot.quickTasks.isNotEmpty()) {
+                panel.addView(summaryText("Tap a task to start it or add it to the current timer", 10f, Color.rgb(190, 187, 180), false), rowParams(10))
+                snapshot.quickTasks.forEach { taskName ->
+                    panel.addView(summaryAction(taskName.uppercase(), Color.rgb(38, 45, 55)) {
+                        WearTransport.sendAction(this, "start_quick_task", taskName)
+                        showMain()
+                        resync()
+                    }, rowParams(6))
+                }
+            } else if ("finish_quick_tasks" !in snapshot.actions) {
+                panel.addView(summaryText("Finish the current activity first", 13f, Color.rgb(224, 163, 56), true), rowParams(12))
+            }
+        }
+        panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(14))
         root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
@@ -333,7 +376,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 setColor(Color.rgb(35, 35, 38))
                 setStroke(dp(1), Color.rgb(90, 170, 235))
             }
-        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
         setOnClickListener { showInfo() }
     }
 
@@ -375,6 +418,10 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         }
         if (screen == Screen.SUMMARY) {
             showSummary()
+            return
+        }
+        if (screen == Screen.TASKS) {
+            showQuickTasks()
             return
         }
         val snapshot = WearState.read(this)
@@ -460,6 +507,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             "delivered" to deliveredLabel,
             "back_at_store" to "BACK AT STORE",
             "end_break" to "END BREAK",
+            "finish_quick_tasks" to "FINISH TASKS",
             "complete_task" to "COMPLETE",
             "single" to "SINGLE",
             "double" to "DOUBLE",
@@ -470,6 +518,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 action == "single" || action == "delivered" && snapshot.activity == "delivery_single" -> Color.rgb(239, 29, 69)
                 action == "double" || action == "delivered" -> Color.rgb(8, 117, 209)
                 action == "break" || action == "end_break" -> Color.rgb(224, 163, 56)
+                action == "finish_quick_tasks" -> Color.rgb(28, 157, 130)
                 action == "dismiss_resume" -> Color.rgb(76, 85, 96)
                 else -> Color.rgb(28, 157, 130)
             }, pending))

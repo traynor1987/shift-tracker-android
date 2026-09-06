@@ -10,7 +10,7 @@ class WearDisplayPolicyTest {
         exitAt: Long = 0L,
         paused: String = "",
         entryAt: Long = 0L,
-    ) = WearSnapshot("revision", "shift", "activity", true, 1_000L, activity, "", 10_000L, 1, "£16.72", 80L, 10L, "£1.00", "£17.72", "0.8 mi", 1, 1, 2, early, exitAt, entryAt, paused, "outside_store", setOf("delivered"), 20_000L)
+    ) = WearSnapshot("revision", "shift", "activity", true, 1_000L, activity, "", 10_000L, 1, "£16.72", 80L, 10L, "£1.00", "£17.72", "0.8 mi", 1, emptyList(), 1, 2, early, exitAt, entryAt, paused, "outside_store", setOf("delivered"), 20_000L)
 
     @Test fun durationUsesClockStyle() {
         assertEquals("0:09", WearDisplayPolicy.duration(9))

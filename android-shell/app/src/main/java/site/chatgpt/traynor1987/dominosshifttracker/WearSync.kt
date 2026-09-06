@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import org.json.JSONObject
+import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
 /** Sends only the existing non-authoritative native mirror to Wear OS. No location collection occurs here. */
@@ -40,6 +41,7 @@ object WearSync {
         shiftTotal = "",
         miles = "",
         runs = 0,
+        quickTasks = emptyList(),
         deliveredCustomers = 0,
         requiredCustomers = 0,
         earlyDispatchGapSeconds = 0,
@@ -73,6 +75,7 @@ object WearSync {
             .put("shiftTotal", current.shiftTotal)
             .put("miles", current.miles)
             .put("runs", current.runs)
+            .put("quickTasks", JSONArray(current.quickTasks))
             .put("deliveredCustomers", current.deliveredCustomers)
             .put("requiredCustomers", current.requiredCustomers)
             .put("earlyDispatchGapSeconds", current.earlyDispatchGapSeconds)

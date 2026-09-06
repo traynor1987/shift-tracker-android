@@ -18,7 +18,7 @@ class ShiftTrackerWearTileService : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
         val state = WearState.read(this)
         val clicked = requestParams.currentState.lastClickableId
-        val action = setOf("delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break", "resume_task")
+        val action = setOf("delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break", "resume_task", "finish_quick_tasks")
             .firstOrNull { candidate -> clicked?.endsWith("_$candidate") == true }
         if (clicked?.startsWith("action_") == true && action != null && state != null && !state.disconnected && action in state.actions && consumeClick(clicked)) WearTransport.sendAction(this, action)
         val label = when {
@@ -40,7 +40,7 @@ class ShiftTrackerWearTileService : TileService() {
         }.orEmpty()
         val root = Column.Builder().addContent(Text.Builder().setText("SHIFT TRACKER").build()).addContent(Text.Builder().setText(label).build()).addContent(Text.Builder().setText(detail).build())
         if (extra.isNotBlank()) root.addContent(Text.Builder().setText(extra).build())
-        val safeActions = if (state?.actions?.contains("resume_task") == true) listOf("resume_task") else state?.actions?.filter { it in setOf("delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break") }?.take(2).orEmpty()
+        val safeActions = if (state?.actions?.contains("resume_task") == true) listOf("resume_task") else state?.actions?.filter { it in setOf("delivered", "back_at_store", "end_break", "complete_task", "single", "double", "break", "finish_quick_tasks") }?.take(2).orEmpty()
         safeActions.forEach { safeAction ->
             val actionId = "action_${state?.stateRevision.orEmpty().hashCode()}_$safeAction"
             val actionLabel = when (safeAction) {
@@ -48,6 +48,7 @@ class ShiftTrackerWearTileService : TileService() {
                 "back_at_store" -> "BACK AT STORE"
                 "end_break" -> "END BREAK"
                 "complete_task" -> "COMPLETE"
+                "finish_quick_tasks" -> "FINISH TASKS"
                 else -> safeAction.replace('_', ' ').uppercase()
             }
             root.addContent(Text.Builder().setText(actionLabel).setModifiers(ModifiersBuilders.Modifiers.Builder().setClickable(ModifiersBuilders.Clickable.Builder().setId(actionId).setOnClick(ActionBuilders.LoadAction.Builder().build()).build()).build()).build())
