@@ -187,16 +187,26 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             gravity = Gravity.CENTER
             includeFontPadding = false
         }
-        val connected = WearState.read(this)?.disconnected == false
+        val snapshot = WearState.read(this)
+        val connected = snapshot?.disconnected == false
         val status = if (connected) "PHONE CONNECTED" else "PHONE NOT CONNECTED"
-        val hint = if (connected) "● Live shift data available" else "● Open phone app to reconnect"
+        val hint = if (connected) "● ${WearDisplayPolicy.syncAgeLabel(snapshot?.updatedAt ?: 0L)}" else "● Open phone app to reconnect"
         panel.addView(text(12f, Color.rgb(35, 161, 255)).apply { this.text = "SHIFT TRACKER" })
         panel.addView(text(21f, Color.WHITE).apply { this.text = status })
         panel.addView(text(12f, if (connected) Color.rgb(70, 205, 170) else Color.rgb(239, 105, 90)).apply { this.text = hint }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8)
-            bottomMargin = dp(20)
+            bottomMargin = dp(12)
         })
-        panel.addView(settingsButton(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        panel.addView(preferenceButton("GEOFENCE VIBRATION", WearPreferences.hapticGeofence(this)) {
+            WearPreferences.toggleHapticGeofence(this); showInfo()
+        }, rowParams(5))
+        panel.addView(preferenceButton("KEEP SCREEN AWAKE", WearPreferences.keepAwake(this)) {
+            WearPreferences.toggleKeepAwake(this); showInfo()
+        }, rowParams(5))
+        panel.addView(preferenceButton("SHOW EARNINGS", WearPreferences.showEarnings(this)) {
+            WearPreferences.toggleShowEarnings(this); showInfo(); WearTileRefresh.request(this)
+        }, rowParams(5))
+        panel.addView(settingsButton(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
         val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         panel.addView(text(12f, Color.rgb(222, 218, 210)).apply {
             this.text = "ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"
@@ -230,10 +240,20 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             panel.addView(summaryText("${snapshot.runs} runs · ${snapshot.deliveries} deliveries", 17f, Color.WHITE, true), rowParams(7))
             panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.shiftDuration(snapshot.paidTimeSeconds)))
             panel.addView(summaryRow("BREAK", WearDisplayPolicy.shiftDuration(snapshot.breakTimeSeconds)))
-            panel.addView(summaryRow("WAGES", snapshot.pay.ifBlank { "—" }))
-            panel.addView(summaryRow("DELIVERIES", snapshot.deliveryReimbursement.ifBlank { "—" }))
-            panel.addView(summaryRow("TOTAL", snapshot.shiftTotal.ifBlank { snapshot.pay.ifBlank { "—" } }, true))
+            if (WearPreferences.showEarnings(this)) {
+                panel.addView(summaryRow("WAGES", snapshot.pay.ifBlank { "—" }))
+                panel.addView(summaryRow("DELIVERIES", snapshot.deliveryReimbursement.ifBlank { "—" }))
+                panel.addView(summaryRow("TOTAL", snapshot.shiftTotal.ifBlank { snapshot.pay.ifBlank { "—" } }, true))
+            } else panel.addView(summaryRow("EARNINGS", "HIDDEN"))
             if (snapshot.miles.isNotBlank()) panel.addView(summaryRow("MILES", snapshot.miles))
+            val recentRuns = WearRecentRuns.read(this)
+            if (recentRuns.isNotEmpty()) {
+                panel.addView(summaryText("RECENT RUNS", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
+                recentRuns.take(3).forEach { run ->
+                    val label = if (run.activity == "delivery_double") "DOUBLE · ${run.customers} DROPS" else "SINGLE"
+                    panel.addView(summaryRow(label, WearDisplayPolicy.duration(run.durationSeconds)))
+                }
+            }
             if ("undo_delivered" in snapshot.actions) panel.addView(summaryAction("UNDO DELIVERED", Color.rgb(76, 85, 96)) {
                 confirmAction("Undo last Delivered?", "This corrects the current delivery count.", "undo_delivered")
             }, rowParams(9))
@@ -241,6 +261,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 confirmAction("Cancel this delivery?", "Only use this for an accidental start.", "cancel_delivery")
             }, rowParams(7))
         }
+        snapshot?.let { panel.addView(summaryText(WearDisplayPolicy.syncAgeLabel(it.updatedAt), 10f, Color.rgb(170, 168, 164), false), rowParams(10)) }
         panel.addView(summaryText("Swipe right to return", 10f, Color.rgb(170, 168, 164), false), rowParams(12))
         root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
@@ -329,6 +350,24 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         setOnClickListener { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
     }
 
+    private fun preferenceButton(label: String, enabled: Boolean, action: () -> Unit) = TextView(this).apply {
+        text = "$label   ${if (enabled) "ON" else "OFF"}"
+        textSize = 10.5f
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTypeface(typeface, Typeface.BOLD)
+        setTextColor(Color.WHITE)
+        setPadding(dp(8), dp(10), dp(8), dp(10))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            setColor(if (enabled) Color.rgb(17, 82, 73) else Color.rgb(42, 42, 45))
+            setStroke(dp(1), if (enabled) Color.rgb(70, 205, 170) else Color.rgb(90, 90, 94))
+        }
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { action() }
+    }
+
     private fun render() {
         if (screen == Screen.INFO) {
             showInfo()
@@ -379,7 +418,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             return
         }
 
-        root.keepScreenOn = true
+        root.keepScreenOn = WearPreferences.keepAwake(this)
         val delivery = snapshot.activity.startsWith("delivery_")
         val colour = when (snapshot.activity) {
             "delivery_single" -> Color.rgb(239, 29, 69)
@@ -405,7 +444,8 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         val customerProgress = if (delivery && snapshot.requiredCustomers > 0) {
             "CUSTOMER ${snapshot.deliveredCustomers.coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
         } else ""
-        detail.text = "${snapshot.deliveries} deliveries • ${snapshot.pay}${if (!delivery && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
+        val earnings = if (WearPreferences.showEarnings(this)) " • ${snapshot.pay}" else ""
+        detail.text = "${snapshot.deliveries} deliveries$earnings${if (!delivery && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
         contextDetail.text = WearDisplayPolicy.contextLine(snapshot, where)
 
         val deliveredLabel = if (snapshot.requiredCustomers > 1) {

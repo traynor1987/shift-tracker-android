@@ -10,6 +10,7 @@ object WearTransitionAlerts {
     private const val LAST_EVENT = "last_event"
 
     fun notify(context: Context, previous: WearSnapshot?, next: WearSnapshot) {
+        if (!WearPreferences.hapticGeofence(context)) return
         val transition = WearDisplayPolicy.geofenceTransition(previous, next) ?: return
         val eventKey = "${next.shiftId}:${next.activityId}:$transition"
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

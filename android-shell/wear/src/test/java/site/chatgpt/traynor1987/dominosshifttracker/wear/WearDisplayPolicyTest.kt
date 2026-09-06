@@ -23,6 +23,12 @@ class WearDisplayPolicyTest {
         assertEquals("8:05", WearDisplayPolicy.shiftDuration(29_159))
     }
 
+    @Test fun syncAgeIsHumanReadable() {
+        assertEquals("Synced just now", WearDisplayPolicy.syncAgeLabel(995_000L, 1_000_000L))
+        assertEquals("Synced 45s ago", WearDisplayPolicy.syncAgeLabel(955_000L, 1_000_000L))
+        assertEquals("Synced 3m ago", WearDisplayPolicy.syncAgeLabel(800_000L, 1_000_000L))
+    }
+
     @Test fun deliveryTitlesStayCompactOnRoundScreens() {
         assertEquals("SINGLE", WearDisplayPolicy.activityTitle("delivery_single"))
         assertEquals("DOUBLE", WearDisplayPolicy.activityTitle("delivery_double"))

@@ -27,6 +27,7 @@ object WearState {
         val next = parse(raw) ?: return
         val previous = read(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
+        WearRecentRuns.capture(context, previous, next)
         WearTransitionAlerts.notify(context, previous, next)
     }
     fun readActionFeedback(context: Context): WearActionFeedback? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ACTION_KEY, null)?.let { raw -> runCatching {

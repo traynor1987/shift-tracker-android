@@ -25,6 +25,17 @@ object WearDisplayPolicy {
         return "${totalMinutes / 60}:${(totalMinutes % 60).toString().padStart(2, '0')}"
     }
 
+    fun syncAgeLabel(updatedAt: Long, now: Long = System.currentTimeMillis()): String {
+        if (updatedAt <= 0L || updatedAt > now + 60_000L) return "Sync time unknown"
+        val seconds = ((now - updatedAt).coerceAtLeast(0L) / 1_000L)
+        return when {
+            seconds < 15L -> "Synced just now"
+            seconds < 60L -> "Synced ${seconds}s ago"
+            seconds < 3_600L -> "Synced ${seconds / 60L}m ago"
+            else -> "Synced ${seconds / 3_600L}h ago"
+        }
+    }
+
     fun contextLine(snapshot: WearSnapshot, storeLabel: String): String {
         val delivery = snapshot.activity.startsWith("delivery_")
         if (!delivery) return snapshot.pausedTaskName.takeIf { it.isNotBlank() }?.let { "PAUSED: $it\nResume it?" }.orEmpty()

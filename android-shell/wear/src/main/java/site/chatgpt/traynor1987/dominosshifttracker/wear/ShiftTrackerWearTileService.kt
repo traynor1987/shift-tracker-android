@@ -28,13 +28,14 @@ class ShiftTrackerWearTileService : TileService() {
         }
         val detail = state?.let {
             val progress = if (it.activity.startsWith("delivery_") && it.requiredCustomers > 0) " · ${it.deliveredCustomers}/${it.requiredCustomers}" else ""
-            "${it.deliveries} deliveries$progress · ${it.pay} wages"
+            val earnings = if (WearPreferences.showEarnings(this)) " · ${it.pay} wages" else ""
+            "${it.deliveries} deliveries$progress$earnings"
         } ?: "Open phone to reconnect"
         val extra = state?.let {
             when {
                 it.pausedTaskName.isNotBlank() -> "Paused: ${it.pausedTaskName}"
-                it.deliveryReimbursement.isNotBlank() -> "Delivery pay ${it.deliveryReimbursement}"
-                else -> ""
+                WearPreferences.showEarnings(this) && it.deliveryReimbursement.isNotBlank() -> "Delivery pay ${it.deliveryReimbursement}"
+                else -> WearDisplayPolicy.syncAgeLabel(it.updatedAt)
             }
         }.orEmpty()
         val root = Column.Builder().addContent(Text.Builder().setText("SHIFT TRACKER").build()).addContent(Text.Builder().setText(label).build()).addContent(Text.Builder().setText(detail).build())
