@@ -221,7 +221,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         }, rowParams(5))
         panel.addView(summaryAction("SYNC NOW", Color.rgb(8, 117, 209)) {
             request()
-            handler.postDelayed({ showInfo() }, 900L)
+            handler.postDelayed({ if (screen == Screen.INFO) render() }, 900L)
         }, rowParams(10))
         if (!connected) panel.addView(summaryAction("OPEN PHONE", Color.rgb(76, 85, 96)) {
             WearTransport.openPhone(this)
@@ -271,6 +271,18 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             if ("start_quick_task" in snapshot.actions || "finish_quick_tasks" in snapshot.actions) {
                 panel.addView(summaryAction("QUICK TASKS", Color.rgb(8, 117, 209)) { showQuickTasks() }, rowParams(9))
             }
+            if (snapshot.activity.startsWith("delivery_")) {
+                panel.addView(summaryText("CURRENT DELIVERY", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
+                panel.addView(summaryRow("CUSTOMERS", "${snapshot.deliveredCustomers}/${snapshot.requiredCustomers}"))
+                panel.addView(summaryRow("STARTED", recordedTime(snapshot.activityStarted)))
+                panel.addView(summaryRow("LEFT STORE", recordedTime(snapshot.storeExitAt)))
+                panel.addView(summaryRow("RETURNED", recordedTime(snapshot.storeEntryAt)))
+                panel.addView(summaryRow("LEAVE TIME", WearDisplayPolicy.recordedInterval(snapshot.activityStarted, snapshot.storeExitAt)))
+                panel.addView(summaryRow("TIME OUT", WearDisplayPolicy.recordedInterval(snapshot.storeExitAt, snapshot.storeEntryAt)))
+                if (snapshot.earlyDispatchGapSeconds > 0) panel.addView(summaryRow("EARLY DISPATCH", WearDisplayPolicy.duration(snapshot.earlyDispatchGapSeconds.toLong())))
+                if (snapshot.pausedTaskName.isNotBlank()) panel.addView(summaryText("Paused: ${snapshot.pausedTaskName}", 12f, Color.rgb(224, 163, 56), false), rowParams(6))
+                panel.addView(summaryText("Recorded phone timings", 10f, Color.rgb(170, 168, 164), false), rowParams(6))
+            }
             val recentRuns = WearRecentRuns.read(this)
             if (recentRuns.isNotEmpty()) {
                 panel.addView(summaryText("RECENT RUNS", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
@@ -315,12 +327,21 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
                 }, rowParams(10))
             }
             if ("start_quick_task" in snapshot.actions && snapshot.quickTasks.isNotEmpty()) {
-                panel.addView(summaryText("Tap a task to start it or add it to the current timer", 10f, Color.rgb(190, 187, 180), false), rowParams(10))
-                snapshot.quickTasks.forEach { taskName ->
-                    panel.addView(summaryAction(taskName.uppercase(), Color.rgb(38, 45, 55)) {
+                panel.addView(summaryText("Tap to start · Hold to favourite", 10f, Color.rgb(190, 187, 180), false), rowParams(10))
+                val favourites = WearPreferences.favouriteTasks(this)
+                WearDisplayPolicy.orderedTasks(snapshot.quickTasks, favourites).forEach { taskName ->
+                    val label = (if (taskName in favourites) "★ " else "") + taskName.uppercase()
+                    panel.addView(summaryAction(label, Color.rgb(38, 45, 55)) {
                         WearTransport.sendAction(this, "start_quick_task", taskName)
                         showMain()
                         resync()
+                    }.apply {
+                        setOnLongClickListener {
+                            WearPreferences.toggleFavouriteTask(this@WearMainActivity, taskName)
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            showQuickTasks()
+                            true
+                        }
                     }, rowParams(6))
                 }
             } else if ("finish_quick_tasks" !in snapshot.actions) {
@@ -331,6 +352,10 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
         activeScrollView = ScrollView(this).apply { addView(panel); isFocusable = true; requestFocus() }
         root.addView(activeScrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
+
+    private fun recordedTime(timestamp: Long): String =
+        if (timestamp <= 0L || timestamp > System.currentTimeMillis()) "Not recorded"
+        else android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(timestamp))
 
     private fun summaryText(value: String, size: Float, colour: Int, bold: Boolean) = TextView(this).apply {
         text = value
@@ -353,7 +378,7 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
             setStroke(dp(1), if (highlight) Color.rgb(35, 161, 255) else Color.rgb(65, 65, 68))
         }
         addView(summaryText(label, 10f, Color.rgb(190, 187, 180), true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(summaryText(value, 13f, Color.WHITE, true))
+        addView(summaryText(value, 13f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }.also { it.layoutParams = rowParams(5) }
 
     private fun summaryAction(label: String, colour: Int, action: () -> Unit) = TextView(this).apply {
@@ -435,16 +460,16 @@ class WearMainActivity : Activity(), DataClient.OnDataChangedListener, MessageCl
     }
 
     private fun render() {
-        if (screen == Screen.INFO) {
-            showInfo()
-            return
-        }
-        if (screen == Screen.SUMMARY) {
-            showSummary()
-            return
-        }
-        if (screen == Screen.TASKS) {
-            showQuickTasks()
+        if (screen != Screen.MAIN) {
+            val position = activeScrollView?.scrollY ?: 0
+            when (screen) {
+                Screen.INFO -> showInfo()
+                Screen.SUMMARY -> showSummary()
+                Screen.TASKS -> showQuickTasks()
+                else -> Unit
+            }
+            val scroll = activeScrollView
+            scroll?.post { if (activeScrollView === scroll) scroll.scrollTo(0, position) }
             return
         }
         val snapshot = WearState.read(this)

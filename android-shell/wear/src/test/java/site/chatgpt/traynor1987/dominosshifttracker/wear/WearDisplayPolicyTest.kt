@@ -12,6 +12,19 @@ class WearDisplayPolicyTest {
         entryAt: Long = 0L,
     ) = WearSnapshot("revision", "shift", "activity", true, 1_000L, activity, "", 10_000L, 1, "£16.72", 80L, 10L, "£1.00", "£17.72", "0.8 mi", 1, emptyList(), 1, 2, early, exitAt, entryAt, paused, "outside_store", setOf("delivered"), 20_000L)
 
+    @Test fun favouritesOnlyReorderCurrentlyConfiguredTasks() {
+        assertEquals(listOf("B", "A", "C"), WearDisplayPolicy.orderedTasks(listOf("A", "B", "C", "B"), setOf("B", "Deleted")))
+        assertEquals(listOf("A", "B"), WearDisplayPolicy.orderedTasks(listOf("A", "B"), emptySet()))
+    }
+
+    @Test fun missingOrReversedEvidenceNeverBecomesARecordedDuration() {
+        assertEquals("Not recorded", WearDisplayPolicy.recordedInterval(0, 10_000))
+        assertEquals("Not recorded", WearDisplayPolicy.recordedInterval(10_000, 0))
+        assertEquals("Not recorded", WearDisplayPolicy.recordedInterval(10_000, 9_000))
+        assertEquals("0:00", WearDisplayPolicy.recordedInterval(10_000, 10_000))
+        assertEquals("2:05", WearDisplayPolicy.recordedInterval(10_000, 135_000))
+    }
+
     @Test fun durationUsesClockStyle() {
         assertEquals("0:09", WearDisplayPolicy.duration(9))
         assertEquals("2:05", WearDisplayPolicy.duration(125))

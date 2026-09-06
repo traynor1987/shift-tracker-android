@@ -11,6 +11,14 @@ object WearDisplayPolicy {
         else -> "AT STORE"
     }
 
+    /** Keep phone ordering within each group; removed tasks never reappear. */
+    fun orderedTasks(tasks: List<String>, favourites: Set<String>): List<String> =
+        tasks.distinct().sortedBy { if (it in favourites) 0 else 1 }
+
+    /** Only recorded, ordered timestamps produce a duration. */
+    fun recordedInterval(start: Long, end: Long): String =
+        if (start <= 0L || end < start) "Not recorded" else duration((end - start) / 1_000L)
+
     fun duration(seconds: Long): String {
         val safe = seconds.coerceAtLeast(0L)
         val minutes = safe / 60

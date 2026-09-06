@@ -1,3 +1,15 @@
+# Wear 2.2.48 — 6 September 2026
+
+Source baseline: GitHub main `302f82be999d25867fa485ca1cde1aa09ce0365a` (2.2.47), recovered directly through the GitHub connector. Historical 2.2.9 archive was not used.
+
+- Shift Summary now shows current delivery customer progress, start/exit/return times, recorded leave/out durations, early dispatch gap and paused work.
+- Missing or reversed timing evidence displays Not recorded. No generated GPS events or canonical state changes.
+- Hold a configured Quick Task to favourite/unfavourite it. Favourites appear first; tapping still sends the exact phone label. Removed phone tasks cannot be started from favourites.
+- Incoming state updates preserve scrolling in Summary, Tasks and Settings. A delayed Settings sync no longer pulls users out of another page.
+- Summary columns share available width on round screens.
+- Phone and Wear version 2.2.48/code 53 use the existing signing pipeline and application ID.
+- Added JVM regression cases for task ordering and invalid/missing timing evidence. Signed CI tests/build/lint must pass before stable publication. Physical watch layout and gesture checks remain necessary.
+
 # Domino's Shift Tracker — project handover
 
 This file is the recovery handover for the existing project. The checked-in

@@ -16,6 +16,15 @@ object WearPreferences {
     fun toggleKeepAwake(context: Context): Boolean = toggle(context, KEEP_AWAKE, true)
     fun toggleShowEarnings(context: Context): Boolean = toggle(context, SHOW_EARNINGS, true)
 
+    fun favouriteTasks(context: Context): Set<String> =
+        prefs(context).getStringSet("favourite_tasks", emptySet())?.toSet().orEmpty()
+
+    fun toggleFavouriteTask(context: Context, name: String) {
+        val names = favouriteTasks(context).toMutableSet()
+        if (!names.remove(name)) names.add(name)
+        prefs(context).edit().putStringSet("favourite_tasks", names).apply()
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun toggle(context: Context, key: String, default: Boolean): Boolean {
         val next = !prefs(context).getBoolean(key, default)
