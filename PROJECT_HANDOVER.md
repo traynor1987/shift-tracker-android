@@ -1,3 +1,11 @@
+# Android / Wear 2.2.59 — two-way Wear preferences
+
+Companion web UI 2.1.197 adds Wear OS settings above App status. Nine explicit watch settings only: keep awake, battery saver display, earnings display, geofence vibration, break alert, dim delay, break minutes, delivery goal, paid hours goal. Existing watch values bootstrap the shared model; phone editing is disabled until all actual watch settings have arrived. Favourite tasks and system permissions remain watch-local.
+
+Shared SettingsMerge/WearSettingsStore sources included by both Gradle modules. Durable separate DataItems per device, per-key logical revisions and stable install source IDs, deterministic same-key offline tie break, merged publication and peer acknowledgements. No wall-clock conflict ordering. Unknown keys, invalid values/revisions rejected. Unrelated offline edits merge; same-key concurrent edits choose one deterministic winner (not guaranteed chronological last tap while disconnected). Retained DataItems allow delivery on reconnection without a live WebView. Existing phone shift settings untouched.
+
+Watch applies changes to current preference stores, alarm scheduling, ongoing activity, tiles/complications, and foreground display. Web origin-restricted get/set/status bridge uses phone mirror, with pending confirmation until watch echoes matching records. Requires phone/watch 2.2.59 and web 2.1.197; open watch once for bootstrap. CI policy tests validate convergence, out-of-order/duplicate delivery, bounds and scope. Physical two-device offline/reconnect and screen-wake checks remain required.
+
 # Wear 2.2.58 — confirm break start too
 
 Includes the 2.2.57 reconnect and visual improvements below. Break start now shares the styled confirmation dialog, showing target minutes, Start Break and Keep Working. Cancel/Back does not send an action. Both start/end recheck current mirrored freshness, identity and allowed action before dispatch; no optimistic change to phone state. Physical round-screen confirmation/cancel checks remain required.

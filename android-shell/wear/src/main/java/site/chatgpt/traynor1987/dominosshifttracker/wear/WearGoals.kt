@@ -9,9 +9,9 @@ object WearGoals {
     fun deliveries(c: Context) = prefs(c).getInt("deliveries", 20).coerceIn(0, 200)
     fun hours(c: Context) = prefs(c).getInt("hours", 8).coerceIn(0, 24)
     fun cycle(c: Context, key: String, options: List<Int>, current: Int) {
-        prefs(c).edit().putInt(key, options[(options.indexOf(current) + 1) % options.size]).apply()
+        WearSettingsSync.change(c, key, options[(options.indexOf(current) + 1) % options.size].toString())
     }
-    fun toggleBreakAlert(c: Context) { prefs(c).edit().putBoolean("break_alert", !breakAlert(c)).apply() }
+    fun toggleBreakAlert(c: Context) { WearSettingsSync.change(c, "break_alert", (!breakAlert(c)).toString()) }
     fun percent(current: Long, target: Long): Int = if (target <= 0) 0 else ((current.coerceAtLeast(0).coerceAtMost(target) * 100) / target).toInt()
 }
 

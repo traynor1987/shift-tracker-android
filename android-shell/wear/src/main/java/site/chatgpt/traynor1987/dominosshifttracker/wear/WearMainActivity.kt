@@ -55,6 +55,12 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
     private val feedbackRefresh = Runnable { render() }
+    private val settingsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "records") handler.post {
+            if (dimmed && !systemAmbient && (!WearPreferences.keepAwake(this) || !WearPreferences.batterySaverDisplay(this))) wakeDisplay()
+            render(); scheduleDim()
+        }
+    }
     private val mirrorListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         runOnUiThread {
             if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) render()
@@ -170,6 +176,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WearSettingsSync.initialize(this)
         build()
         lifecycle.addObserver(ambientObserver)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
@@ -209,6 +216,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         super.onResume()
         if (!ambientObserver.isAmbient) { systemAmbient = false; wakeDisplay() }
         getSharedPreferences(WearState.PREFS, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(mirrorListener)
+        getSharedPreferences("wear_settings_sync_v1", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(settingsListener)
+        WearSettingsSync.store(this).refresh()
         Wearable.getDataClient(this).addListener(this)
         Wearable.getMessageClient(this).addListener(this)
         getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
@@ -226,6 +235,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     override fun onPause() {
+        getSharedPreferences("wear_settings_sync_v1", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(settingsListener)
         getSharedPreferences(WearState.PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(mirrorListener)
         getSharedPreferences("wear_update", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(updateListener)
         Wearable.getDataClient(this).removeListener(this)

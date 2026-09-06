@@ -285,6 +285,8 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_web_update:rollback" -> rollbackWebUpdate()
             "shift_tracker_apk_update:check" -> apkUpdateManager.check(message.optBoolean("manual", true), message.optString("webVersion").takeIf { it.isNotBlank() })
             "shift_tracker_apk_update:install" -> apkUpdateManager.downloadAndInstall()
+            "shift_tracker_wear_settings:get" -> PhoneWearSettings.refresh(this)
+            "shift_tracker_wear_settings:set" -> PhoneWearSettings.edit(this, message.optString("key"), message.optString("value"))
             "shift_tracker_wear_update:check" -> wearUpdateManager.check(message.optBoolean("manual", true))
             "shift_tracker_wear_update:send" -> wearUpdateManager.send()
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))

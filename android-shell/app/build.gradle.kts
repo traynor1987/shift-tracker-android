@@ -17,6 +17,7 @@ val releaseSigningReady = listOf(
 ).all { !it.isNullOrBlank() }
 
 android {
+    sourceSets.getByName("main").java.srcDir("../shared/src/main/java")
     namespace = "site.chatgpt.traynor1987.dominosshifttracker"
     compileSdk = 35
 
@@ -32,8 +33,8 @@ android {
         targetSdk = 35
         // versionCode is the authoritative Android update comparator. Keep it
         // ahead of the public 2.2.22 / 27 production APK.
-        versionCode = 63
-        versionName = "2.2.58"
+        versionCode = 64
+        versionName = "2.2.59"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 

@@ -12,6 +12,7 @@ val releaseKeyPassword = providers.environmentVariable("SHIFT_TRACKER_KEY_PASSWO
 val releaseSigningReady = listOf(releaseKeystorePath, releaseKeystorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 
 android {
+    sourceSets.getByName("main").java.srcDir("../shared/src/main/java")
     namespace = "site.chatgpt.traynor1987.dominosshifttracker.wear"
     compileSdk = 35
     defaultConfig {
@@ -19,8 +20,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 30
         targetSdk = 35
-        versionCode = 63
-        versionName = "2.2.58"
+        versionCode = 64
+        versionName = "2.2.59"
     }
     signingConfigs {
         if (releaseSigningReady) create("shiftTrackerRelease") {
