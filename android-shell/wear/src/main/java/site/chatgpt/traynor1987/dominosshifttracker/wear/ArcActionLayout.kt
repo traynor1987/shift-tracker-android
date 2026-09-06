@@ -24,17 +24,18 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
     private fun dp(value: Float) = value * resources.displayMetrics.density
 
     private fun buttonWidth(count: Int, availableWidth: Int) = when (count) {
-        1 -> minOf(dp(160f), availableWidth * .72f)
-        2 -> minOf(dp(104f), availableWidth * .43f)
-        else -> minOf(dp(70f), availableWidth * .28f)
+        1 -> minOf(dp(140f), availableWidth * .58f)
+        2 -> minOf(dp(96f), availableWidth * .40f)
+        else -> minOf(dp(66f), availableWidth * .26f)
     }.toInt().coerceAtLeast(dp(48f).toInt())
 
-    private fun buttonHeight(count: Int) = dp(if (count == 1) 56f else 48f).toInt()
+    private fun buttonHeight() = dp(48f).toInt()
 
     private fun actionCenters(count: Int): List<Pair<Float, Float>> {
-        val radius = min(width, height) * .36f
         val centerX = width / 2f
-        val centerY = height * .47f
+        if (count == 1) return listOf(centerX to height * .78f)
+        val radius = min(width, height) * .34f
+        val centerY = height * .44f
         val angles = when (count) {
             1 -> listOf(90.0)
             2 -> listOf(118.0, 62.0)
@@ -51,7 +52,7 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
         val measuredWidth = MeasureSpec.getSize(widthSpec)
         val measuredHeight = MeasureSpec.getSize(heightSpec)
         val childWidth = buttonWidth(childCount, measuredWidth)
-        val childHeight = buttonHeight(childCount)
+        val childHeight = buttonHeight()
         for (index in 0 until childCount) {
             getChildAt(index).measure(
                 MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
@@ -63,9 +64,9 @@ class ArcActionLayout(context: Context) : ViewGroup(context) {
 
     override fun onDraw(canvas: Canvas) {
         if (childCount == 0) return
-        val radius = min(width, height) * .36f
+        val radius = min(width, height) * .34f
         val centerX = width / 2f
-        val centerY = height * .47f
+        val centerY = height * .44f
         val arc = RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(2f)

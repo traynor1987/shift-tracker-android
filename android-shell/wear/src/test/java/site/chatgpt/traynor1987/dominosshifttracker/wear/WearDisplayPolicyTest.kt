@@ -17,6 +17,11 @@ class WearDisplayPolicyTest {
         assertEquals("2:05", WearDisplayPolicy.duration(125))
     }
 
+    @Test fun deliveryTitlesStayCompactOnRoundScreens() {
+        assertEquals("SINGLE", WearDisplayPolicy.activityTitle("delivery_single"))
+        assertEquals("DOUBLE", WearDisplayPolicy.activityTitle("delivery_double"))
+    }
+
     @Test fun completedOutsideTripUsesRecordedEntry() {
         assertEquals(
             "LEAVE 0:42 · OUT 2:08",
