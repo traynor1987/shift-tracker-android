@@ -1,3 +1,9 @@
+# Wear 2.2.57 — friendly reconnect and break confirmation
+
+Replaces giant STATE STALE with Waiting for phone / Let’s reconnect, last sync age, explicitly last-known activity, proximity/app guidance and Retry Sync. Does not claim Bluetooth is disconnected merely because the mirror is old; action controls remain unavailable until fresh data arrives. Normal timer sizing restored after reconnect; ambient wording also softened.
+
+Break confirmation now has an app icon, elapsed minutes, compact copy, amber End Break and dark Stay on Break rounded 44dp controls in a full-screen scrollable dialog. Back/dismiss still cancels. Confirm revalidates freshness and shift/activity identity before using existing action transport. Physical round-screen layout and accessibility checks required; CI tests/lint/signing gate release.
+
 # Wear 2.2.56 — visible saved update entry
 
 Includes 2.2.55 processing fixes below. Moves the existing update entry to the top of Settings (tap main logo). Shows green UPDATE READY · OPEN and Saved on watch when the verified APK exists, or UPDATE PROGRESS during transfer. Reopens the existing updater without retransferring; dismissal does not hide this entry. Settings refreshes as transfer state changes while preserving scroll. Existing installation/version verification and backup notification remain in place.

@@ -61,7 +61,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
     }
 
-    private var breakConfirmation: AlertDialog? = null
+    private var breakConfirmation: android.app.Dialog? = null
     private val notificationPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { WearShiftOngoing.reconcile(this) }
@@ -143,7 +143,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         panel.addView(line(android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(now)), 25f))
         val valid = snapshot != null && !snapshot.disconnected && snapshot.active
-        panel.addView(line(if (valid) WearDisplayPolicy.activityTitle(snapshot!!.activity) else if (snapshot?.active == true) "PHONE STATE STALE" else "OFF SHIFT", 13f))
+        panel.addView(line(if (valid) WearDisplayPolicy.activityTitle(snapshot!!.activity) else if (snapshot?.active == true) "WAITING FOR PHONE" else "OFF SHIFT", 13f))
         if (valid) {
             val start = if (snapshot!!.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
             if (start in 1..now) panel.addView(line("Started ${android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(start))}", 12f))
@@ -643,22 +643,41 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         if (breakConfirmation?.isShowing == true) return
         val original = WearState.read(this) ?: return
         handler.removeCallbacks(dimTask)
-        breakConfirmation = AlertDialog.Builder(this)
-            .setTitle("End break?")
-            .setMessage("Are you sure you want to end your break?")
-            .setNegativeButton("Stay on break", null)
-            .setPositiveButton("End break") { _, _ ->
-                val current = WearState.read(this)
-                if (current?.active == true && current.activity == "break" &&
-                    current.activityStarted == original.activityStarted && "end_break" in current.actions) {
-                    WearTransport.sendAction(this, "end_break")
-                    resync()
-                } else { request(); render() }
-            }
-            .create().apply {
-                setOnDismissListener { breakConfirmation = null; scheduleDim() }
-                show()
-            }
+        val dialog = android.app.Dialog(this).apply { requestWindowFeature(android.view.Window.FEATURE_NO_TITLE) }
+        breakConfirmation = dialog
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(28), dp(28), dp(28))
+        }
+        panel.addView(ImageView(this).apply { setImageResource(R.drawable.ic_shift_tracker) },
+            LinearLayout.LayoutParams(dp(24), dp(24)))
+        panel.addView(summaryText("End break?", 19f, Color.WHITE, true), rowParams(8))
+        val elapsed = ((System.currentTimeMillis() - original.activityStarted) / 60_000L).coerceAtLeast(0)
+        panel.addView(summaryText("$elapsed min on break", 12f, Color.rgb(224, 163, 56), true), rowParams(5))
+        panel.addView(summaryText("Ready to get back to work?", 11f, Color.LTGRAY, false), rowParams(6))
+        fun choice(label: String, colour: Int, onClick: () -> Unit) = summaryAction(label, colour, onClick).apply {
+            minHeight = dp(44)
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+        }
+        panel.addView(choice("END BREAK", Color.rgb(148, 98, 19)) {
+            dialog.dismiss()
+            val current = WearState.read(this)
+            if (current?.active == true && !current.disconnected && current.activity == "break" &&
+                current.shiftId == original.shiftId && current.activityId == original.activityId &&
+                current.activityStarted == original.activityStarted && "end_break" in current.actions) {
+                WearTransport.sendAction(this, "end_break")
+                resync()
+            } else { request(); render() }
+        }, rowParams(12))
+        panel.addView(choice("STAY ON BREAK", Color.rgb(38, 44, 53)) { dialog.dismiss() }, rowParams(6))
+        dialog.setContentView(ScrollView(this).apply { setBackgroundColor(Color.BLACK); addView(panel) })
+        dialog.setOnDismissListener { breakConfirmation = null; scheduleDim() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
     }
 
     private fun confirmAction(title: String, message: String, action: String) {
@@ -737,17 +756,34 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             root.performHapticFeedback(if (outcome in setOf("applied", "already_applied")) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.REJECT)
         }
 
+        timer.textSize = 32f
+        state.textSize = 15f
         if (snapshot == null || snapshot.disconnected) {
             root.keepScreenOn = false
             dial.accent = Color.rgb(224, 163, 56)
             dial.progress = .15f
             state.setTextColor(Color.rgb(224, 163, 56))
-            state.text = "PHONE DISCONNECTED"
+            state.text = "WAITING FOR PHONE"
+            state.textSize = 13f
             timer.stop()
-            timer.text = "STATE STALE"
-            detail.text = "Open phone to reconnect"
-            contextDetail.text = ""
-            actions.addView(openPhoneButton())
+            timer.textSize = 19f
+            timer.text = "Let’s reconnect"
+            detail.text = WearDisplayPolicy.syncAgeLabel(snapshot?.updatedAt ?: 0L) +
+                if (snapshot?.active == true) "\nLast: ${WearDisplayPolicy.activityTitle(snapshot.activity).lowercase().replaceFirstChar { it.uppercase() }}" else ""
+            contextDetail.text = "Move closer to your phone.\nIf nearby, open the phone app."
+            actionStatus.text = "Controls return after syncing"
+            actionStatus.setTextColor(Color.LTGRAY)
+            actions.addView(TextView(this).apply {
+                text = "RETRY SYNC"; textSize = 11f; gravity = Gravity.CENTER
+                setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
+                background = GradientDrawable().apply { cornerRadius = dp(30).toFloat(); setColor(Color.rgb(8, 117, 209)) }
+                isClickable = true; isFocusable = true
+                setOnClickListener {
+                    text = "CHECKING…"
+                    request()
+                    handler.postDelayed({ render() }, 1_800L)
+                }
+            })
             actions.requestLayout()
             return
         }
