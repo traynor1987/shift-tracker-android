@@ -285,30 +285,68 @@ class WearUpdateActivity : androidx.activity.ComponentActivity() {
     private lateinit var title: TextView
     private lateinit var copy: TextView
     private lateinit var progress: android.widget.ProgressBar
-    private lateinit var install: Button
+    private lateinit var install: TextView
+    private lateinit var version: TextView
+    private lateinit var amount: TextView
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { returnToTracker() }
         })
-        title = text(18f)
-        copy = text(14f)
-        progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        install = Button(this).apply { text = "INSTALL UPDATE"; setOnClickListener { installUpdate() } }
-        val later = Button(this).apply { text = "BACK TO TRACKER"; setOnClickListener {
-            returnToTracker()
-        } }
+        title = text(18f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
+        version = text(10f).apply { setTextColor(Color.rgb(164, 172, 183)) }
+        copy = text(12f).apply { setTextColor(Color.rgb(196, 201, 209)) }
+        amount = text(26f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
+        progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(35, 161, 255))
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(42, 48, 57))
+            indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.rgb(35, 161, 255))
+        }
+        install = action("Install update", true) { installUpdate() }
+        val later = action("Back to tracker", false) { returnToTracker() }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(28), dp(34), dp(28), dp(34)); setBackgroundColor(Color.BLACK)
-            addView(title); addView(copy)
-            addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(18)))
-            addView(install, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(later, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setPadding(dp(30), dp(26), dp(30), dp(36)); setBackgroundColor(Color.BLACK)
+            addView(android.widget.ImageView(this@WearUpdateActivity).apply {
+                setImageResource(R.drawable.ic_shift_tracker)
+                contentDescription = "Shift Tracker"
+                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(Color.BLACK) }
+                clipToOutline = true
+            }, LinearLayout.LayoutParams(dp(30), dp(30)))
+            addView(text(11f).apply { text = "SHIFT TRACKER"; setTextColor(Color.rgb(35, 161, 255)); letterSpacing = 0.08f }, row(6))
+            addView(version, row(1))
+            addView(title, row(8))
+            addView(amount, row(2))
+            addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(6); bottomMargin = dp(6) })
+            addView(copy, row(4))
+            addView(install, row(10))
+            addView(later, row(7))
         }
-        setContentView(android.widget.ScrollView(this).apply { addView(panel) })
+        setContentView(android.widget.ScrollView(this).apply { setBackgroundColor(Color.BLACK); addView(panel) })
     }
+    private fun row(top: Int) = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(top) }
+    private fun action(label: String, primary: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 12f; gravity = Gravity.CENTER
+        setTextColor(Color.WHITE); setTypeface(typeface, android.graphics.Typeface.BOLD)
+        includeFontPadding = false; minHeight = dp(44)
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+        val shape = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(24).toFloat()
+            setColor(if (primary) Color.rgb(8, 117, 209) else Color.rgb(30, 35, 43))
+            setStroke(dp(1), if (primary) Color.rgb(67, 158, 232) else Color.rgb(68, 76, 88))
+        }
+        background = android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(Color.argb(55, 255, 255, 255)), shape, null)
+        isClickable = true; isFocusable = true
+        accessibilityDelegate = object : android.view.View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: android.view.View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info); info.className = Button::class.java.name
+            }
+        }
+        setOnClickListener { onClick() }
+    }
+
     override fun onResume() { super.onResume(); handler.post(refresh) }
     override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
     private fun returnToTracker() {
@@ -323,21 +361,37 @@ class WearUpdateActivity : androidx.activity.ComponentActivity() {
         val state = prefs.getString("transfer_state", "")
         val percent = prefs.getInt("transfer_percent", 0).coerceIn(0, 100)
         val fresh = WearUpdateUi.isVisible(this)
-        title.text = "WATCH UPDATE"
-        copy.text = when {
-            ready -> "Version ${prefs.getString("transfer_version", "")} is verified.\nDo you want to update?"
-            state == "failed" -> "Transfer failed. Retry from your phone."
-            !fresh -> "No active transfer. Send the update from your phone."
-            state == "verifying" -> "Received 100%\nVerifying update…"
-            state == "receiving" -> "Receiving update\n$percent%"
-            else -> "Waiting for phone…"
+        val versionName = prefs.getString("transfer_version", "").orEmpty()
+        version.text = if (versionName.isBlank()) "WEAR OS UPDATE" else "WEAR OS  ·  v$versionName"
+        val accent = when { ready -> Color.rgb(70, 205, 170); state == "failed" -> Color.rgb(239, 105, 90); else -> Color.rgb(35, 161, 255) }
+        title.setTextColor(if (ready || state == "failed") accent else Color.WHITE)
+        title.text = when {
+            ready -> "Ready to install"
+            state == "failed" -> "Transfer interrupted"
+            !fresh -> "Watch update"
+            state == "verifying" -> "Checking update"
+            state == "receiving" -> "Receiving update"
+            else -> "Connecting…"
         }
+        copy.text = when {
+            ready -> "Update verified.\nInstall it now?"
+            state == "failed" -> "Send it again from your phone."
+            !fresh -> "Start an update from your phone."
+            state == "verifying" -> "Received. Checking the file…"
+            state == "receiving" -> "You can return to tracking."
+            else -> "Waiting for your phone."
+        }
+        amount.text = "$percent%"
+        amount.setTextColor(accent)
+        amount.visibility = if (fresh && !ready && state == "receiving") android.view.View.VISIBLE else android.view.View.GONE
         progress.visibility = if (fresh && !ready) android.view.View.VISIBLE else android.view.View.GONE
         progress.isIndeterminate = state != "receiving"
         progress.progress = percent
+        progress.contentDescription = if (state == "receiving") "$percent percent received" else "Waiting for update verification"
         install.visibility = if (ready) android.view.View.VISIBLE else android.view.View.GONE
-        install.text = if (!packageManager.canRequestPackageInstalls()) "ALLOW INSTALLS" else "INSTALL UPDATE"
+        install.text = if (!packageManager.canRequestPackageInstalls()) "Allow installs" else "Install update"
     }
+
     private fun installUpdate() {
         if (!hasReadyWearUpdate(this)) { render(); return }
         val prefs = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
@@ -355,7 +409,7 @@ class WearUpdateActivity : androidx.activity.ComponentActivity() {
         }.onFailure { WearUpdateStatus.send(this, node, "failed", "Watch installer could not be opened") }
     }
     private fun text(size: Float) = TextView(this).apply {
-        textSize = size; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(10))
+        textSize = size; setTextColor(Color.WHITE); gravity = Gravity.CENTER; includeFontPadding = false
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 }

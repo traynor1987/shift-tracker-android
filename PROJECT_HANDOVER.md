@@ -1,3 +1,7 @@
+# Wear 2.2.51 — update screen visual polish
+
+Adds the existing app icon, compact brand/version header, blue receiving progress, green verified state, readable rounded primary/secondary actions, ripple feedback and round-screen scroll padding. Native system installer screens remain OS-owned. Transfer and verification logic unchanged. Build/lint and physical circular-screen visual review are the release checks; no new behavioural tests for this visual-only pass.
+
 # Wear 2.2.50 — battery-saving display
 
 Baseline: 4342f42 / 2.2.49. Adds native AmbientLifecycleObserver, sparse monochrome clock/activity/start-time display, low-bit anti-alias handling and minute-based pixel offsets. Ambient displays no frozen seconds counter. Incoming snapshots do not brighten or animate the UI. Wake restores the prior screen/scroll; first touch/Back is consumed to prevent accidental actions.
