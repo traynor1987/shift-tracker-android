@@ -13,10 +13,12 @@ import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceService
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
-import androidx.wear.watchface.complications.datasource.ComplicationRequestListener
 
 class ShiftTrackerComplicationService : ComplicationDataSourceService() {
-    override fun onComplicationRequest(request: ComplicationRequest, listener: ComplicationRequestListener) {
+    override fun onComplicationRequest(
+        request: ComplicationRequest,
+        listener: ComplicationDataSourceService.ComplicationRequestListener,
+    ) {
         listener.onComplicationData(complication(request.complicationType, WearState.read(this)))
     }
 
