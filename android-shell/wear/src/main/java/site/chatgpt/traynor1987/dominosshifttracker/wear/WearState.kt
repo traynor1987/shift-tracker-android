@@ -39,7 +39,12 @@ object WearState {
         val id = result.optString("id")
         val current = readActionFeedback(context) ?: return null
         if (id != current.id) return null
-        saveActionFeedback(context, current.id, current.action, result.optString("outcome", "error"))
+        val outcome = result.optString("outcome", "error")
+        // The phone sends an immediate queued acknowledgement and a final
+        // result later. Never let an out-of-order acknowledgement replace a
+        // final result that the driver has already seen.
+        if (!current.pending && WearReliabilityPolicy.actionIsPending(outcome)) return current
+        saveActionFeedback(context, current.id, current.action, outcome)
         return readActionFeedback(context)
     }
     fun clear(context: Context) {

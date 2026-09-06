@@ -40,7 +40,8 @@ private const val STATUS = "/shift-tracker/update/wear/status"
 private const val CHANNEL = "/shift-tracker/update/wear/apk"
 private const val VERSION = "/shift-tracker/update/wear/version"
 private const val UPDATE_CHANNEL = "shift_tracker_updates"
-private const val UPDATE_NOTIFICATION = 226
+private const val RECEIVING_NOTIFICATION = 226
+private const val READY_NOTIFICATION = 227
 private const val UPDATE_PREFS = "wear_update"
 
 class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerService() {
@@ -79,7 +80,7 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
             Wearable.getChannelClient(this).close(channel)
             return
         }
-        runCatching { startForeground(UPDATE_NOTIFICATION, receivingNotification()) }
+        runCatching { startForeground(RECEIVING_NOTIFICATION, receivingNotification()) }
         executor.execute { receive(channel) }
     }
 
@@ -204,7 +205,7 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
 
     private fun notifyReady(version: String) {
         ensureNotificationChannel()
-        val open = PendingIntent.getActivity(this, UPDATE_NOTIFICATION, Intent(this, WearUpdateActivity::class.java)
+        val open = PendingIntent.getActivity(this, READY_NOTIFICATION, Intent(this, WearUpdateActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, UPDATE_CHANNEL)
             .setSmallIcon(R.drawable.ic_shift_tracker)
@@ -215,7 +216,7 @@ class WearUpdateReceiver : com.google.android.gms.wearable.WearableListenerServi
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
         if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            NotificationManagerCompat.from(this).notify(UPDATE_NOTIFICATION, notification)
+            NotificationManagerCompat.from(this).notify(READY_NOTIFICATION, notification)
         }
     }
 
