@@ -1,3 +1,11 @@
+# Wear 2.2.50 — battery-saving display
+
+Baseline: 4342f42 / 2.2.49. Adds native AmbientLifecycleObserver, sparse monochrome clock/activity/start-time display, low-bit anti-alias handling and minute-based pixel offsets. Ambient displays no frozen seconds counter. Incoming snapshots do not brighten or animate the UI. Wake restores the prior screen/scroll; first touch/Back is consumed to prevent accidental actions.
+
+Battery saver display defaults ON alongside Keep Screen Awake. It releases the bright-screen flag so Wear OS can enter ambient. A foreground dim preview starts after configurable 15/30/60 seconds; true low-power timing, wrist raise and return-to-watch-face remain system-controlled. No gaze detection or custom continuous sensor polling. Settings includes a preview button. Turning saver OFF retains the old bright keep-awake option.
+
+Physical device checks: native ambient entry/exit, tap/wrist/Back wake, restored scrolling, no accidental delivery, system AOD disabled, keep-awake disabled, shift end/disconnection while dim, and battery use over a shift. No battery savings percentage is claimed.
+
 # Wear / Android 2.2.49 — 6 September 2026
 
 - Baseline: f97ba9b (2.2.48). Recent runs are now scoped to the active shift; legacy unscoped cache is hidden and cleared on the next snapshot. Phone history is untouched.

@@ -25,6 +25,14 @@ object WearPreferences {
         prefs(context).edit().putStringSet("favourite_tasks", names).apply()
     }
 
+    fun batterySaverDisplay(context: Context): Boolean = prefs(context).getBoolean("battery_saver_display", true)
+    fun toggleBatterySaverDisplay(context: Context): Boolean = toggle(context, "battery_saver_display", true)
+    fun dimDelay(context: Context): Long = prefs(context).getLong("dim_delay", 15_000L).takeIf { it in listOf(15_000L, 30_000L, 60_000L) } ?: 15_000L
+    fun cycleDimDelay(context: Context) {
+        val next = when (dimDelay(context)) { 15_000L -> 30_000L; 30_000L -> 60_000L; else -> 15_000L }
+        prefs(context).edit().putLong("dim_delay", next).apply()
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun toggle(context: Context, key: String, default: Boolean): Boolean {
         val next = !prefs(context).getBoolean(key, default)

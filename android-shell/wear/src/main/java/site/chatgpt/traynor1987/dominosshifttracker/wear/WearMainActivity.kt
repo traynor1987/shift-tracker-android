@@ -34,6 +34,7 @@ import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlin.math.abs
+import androidx.wear.ambient.AmbientLifecycleObserver
 
 class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
     private enum class Screen { MAIN, SUMMARY, TASKS, INFO }
@@ -54,11 +55,106 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
 
+    private var dimmed = false
+    private var systemAmbient = false
+    private var lowBit = false
+    private var restoreScroll = 0
+    private var wakeGuardUntil = 0L
+    private var consumeWakeTouch = false
+    private val dimTick = object : Runnable {
+        override fun run() {
+            if (dimmed && !systemAmbient) {
+                showDim()
+                handler.postDelayed(this, 60_000L)
+            }
+        }
+    }
+    private val dimTask = Runnable {
+        if (WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this) && WearState.read(this)?.active == true) enterDim()
+    }
+    private val ambientObserver by lazy {
+        AmbientLifecycleObserver(this, object : AmbientLifecycleObserver.AmbientLifecycleCallback {
+            override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
+                systemAmbient = true
+                lowBit = ambientDetails.deviceHasLowBitAmbient
+                enterDim()
+            }
+            override fun onUpdateAmbient() { if (dimmed) showDim() }
+            override fun onExitAmbient() {
+                systemAmbient = false
+                wakeDisplay()
+            }
+        })
+    }
+
+    private fun scheduleDim() {
+        handler.removeCallbacks(dimTask)
+        if (!dimmed && !systemAmbient && WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this))
+            handler.postDelayed(dimTask, WearPreferences.dimDelay(this))
+    }
+    private fun enterDim() {
+        if (!dimmed) restoreScroll = activeScrollView?.scrollY ?: 0
+        dimmed = true
+        handler.removeCallbacksAndMessages(null)
+        timer.stop()
+        root.keepScreenOn = false
+        window.attributes = window.attributes.apply { screenBrightness = 0.05f }
+        showDim()
+        if (!systemAmbient) handler.postDelayed(dimTick, 60_000L)
+    }
+    private fun showDim() {
+        root.removeAllViews()
+        val snapshot = WearState.read(this)
+        val now = System.currentTimeMillis()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            setPadding(dp(34), dp(34), dp(34), dp(34))
+            // Shift sparse text every minute, with generous round-screen insets.
+            translationX = ((now / 60_000L % 5) - 2).toFloat() * resources.displayMetrics.density
+            translationY = ((now / 300_000L % 5) - 2).toFloat() * resources.displayMetrics.density
+        }
+        fun line(value: String, size: Float) = TextView(this).apply {
+            text = value; textSize = size; gravity = Gravity.CENTER
+            setTextColor(if (lowBit) Color.WHITE else Color.LTGRAY)
+            paint.isAntiAlias = !lowBit
+            includeFontPadding = false
+        }
+        panel.addView(line(android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(now)), 25f))
+        val valid = snapshot != null && !snapshot.disconnected && snapshot.active
+        panel.addView(line(if (valid) WearDisplayPolicy.activityTitle(snapshot!!.activity) else if (snapshot?.active == true) "PHONE STATE STALE" else "OFF SHIFT", 13f))
+        if (valid) {
+            val start = if (snapshot!!.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
+            if (start in 1..now) panel.addView(line("Started ${android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(start))}", 12f))
+            panel.addView(line("${snapshot.deliveries} deliveries", 12f))
+        }
+        panel.addView(line("Tap or Back to wake", 10f))
+        root.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+    private fun wakeDisplay(): Boolean {
+        if (!dimmed) return false
+        if (systemAmbient) return true // Wear OS owns the actual power-state transition.
+        handler.removeCallbacks(dimTick)
+        dimmed = false
+        lowBit = false
+        wakeGuardUntil = SystemClock.elapsedRealtime() + 700L
+        window.attributes = window.attributes.apply { screenBrightness = -1f }
+        root.removeAllViews()
+        if (screen == Screen.MAIN) root.addView(main)
+        render()
+        val scroll = activeScrollView
+        scroll?.post { if (activeScrollView === scroll) scroll.scrollTo(0, restoreScroll) }
+        scheduleDim()
+        return true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         build()
+        lifecycle.addObserver(ambientObserver)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (wakeDisplay() || SystemClock.elapsedRealtime() < wakeGuardUntil) return
+                scheduleDim()
                 when (screen) {
                     Screen.TASKS -> showSummary()
                     Screen.SUMMARY, Screen.INFO -> showMain()
@@ -75,6 +171,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         runOnUiThread { openPendingUpdate() }
     }
     private fun openPendingUpdate() {
+        if (dimmed || systemAmbient) return
         val prefs = getSharedPreferences("wear_update", MODE_PRIVATE)
         val token = prefs.getString("transfer_token", "").orEmpty()
         if (WearUpdateUi.isVisible(this) && token != shownUpdate && token != prefs.getString("dismissed_token", null)) {
@@ -85,12 +182,14 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
 
     override fun onResume() {
         super.onResume()
+        if (!ambientObserver.isAmbient) { systemAmbient = false; wakeDisplay() }
         Wearable.getDataClient(this).addListener(this)
         Wearable.getMessageClient(this).addListener(this)
         getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
         openPendingUpdate()
         request()
         render()
+        scheduleDim()
     }
 
     override fun onPause() {
@@ -98,6 +197,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         Wearable.getDataClient(this).removeListener(this)
         Wearable.getMessageClient(this).removeListener(this)
         handler.removeCallbacksAndMessages(null)
+        timer.stop()
+        window.attributes = window.attributes.apply { screenBrightness = -1f }
         super.onPause()
     }
 
@@ -177,6 +278,15 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            consumeWakeTouch = dimmed || SystemClock.elapsedRealtime() < wakeGuardUntil
+            if (dimmed) wakeDisplay()
+            scheduleDim()
+        }
+        if (consumeWakeTouch) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) consumeWakeTouch = false
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 swipeStartX = event.x
@@ -200,6 +310,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (wakeDisplay()) return true
+        scheduleDim()
         if (event.action == MotionEvent.ACTION_SCROLL && event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)) {
             val distance = -event.getAxisValue(MotionEvent.AXIS_SCROLL) * ViewConfiguration.get(this).scaledVerticalScrollFactor
             activeScrollView?.scrollBy(0, distance.toInt())
@@ -240,6 +352,14 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         panel.addView(preferenceButton("KEEP SCREEN AWAKE", WearPreferences.keepAwake(this)) {
             WearPreferences.toggleKeepAwake(this); showInfo()
         }, rowParams(5))
+        panel.addView(preferenceButton("BATTERY SAVER DISPLAY", WearPreferences.batterySaverDisplay(this)) {
+            WearPreferences.toggleBatterySaverDisplay(this); showInfo(); scheduleDim()
+        }, rowParams(5))
+        panel.addView(summaryAction("DIM AFTER ${WearPreferences.dimDelay(this) / 1_000}s", Color.rgb(76, 85, 96)) {
+            WearPreferences.cycleDimDelay(this); showInfo(); scheduleDim()
+        }, rowParams(5))
+        panel.addView(summaryAction("PREVIEW DIM DISPLAY", Color.rgb(76, 85, 96)) { enterDim() }, rowParams(5))
+        panel.addView(summaryText("Wrist wake and always-on follow watch display settings.", 10f, Color.LTGRAY, false), rowParams(5))
         panel.addView(preferenceButton("SHOW EARNINGS", WearPreferences.showEarnings(this)) {
             WearPreferences.toggleShowEarnings(this); showInfo(); WearTileRefresh.request(this); WearComplicationRefresh.request(this)
         }, rowParams(5))
@@ -487,6 +607,10 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     private fun render() {
+        if (dimmed || systemAmbient) {
+            // Incoming phone snapshots must not wake the screen or rebuild it every second.
+            return
+        }
         if (screen != Screen.MAIN) {
             val position = activeScrollView?.scrollY ?: 0
             when (screen) {
@@ -540,7 +664,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             return
         }
 
-        root.keepScreenOn = WearPreferences.keepAwake(this)
+        root.keepScreenOn = WearPreferences.keepAwake(this) && !WearPreferences.batterySaverDisplay(this)
         val delivery = snapshot.activity.startsWith("delivery_")
         val colour = when (snapshot.activity) {
             "delivery_single" -> Color.rgb(239, 29, 69)
