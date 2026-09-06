@@ -55,6 +55,22 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
 
+    private var breakConfirmation: AlertDialog? = null
+    private val notificationPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { WearShiftOngoing.reconcile(this) }
+
+    private fun requestAmbientNotification() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            val prefs = getSharedPreferences("wear_display_permission", MODE_PRIVATE)
+            if (!prefs.getBoolean("asked", false)) {
+                prefs.edit().putBoolean("asked", true).apply()
+                notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     private var dimmed = false
     private var systemAmbient = false
     private var lowBit = false
@@ -70,7 +86,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
     }
     private val dimTask = Runnable {
-        if (screen == Screen.MAIN && WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this) && WearState.read(this)?.active == true) enterDim()
+        if (breakConfirmation?.isShowing != true && screen == Screen.MAIN && WearPreferences.keepAwake(this) && WearPreferences.batterySaverDisplay(this) && WearState.read(this)?.active == true) enterDim()
     }
     private val ambientObserver by lazy {
         AmbientLifecycleObserver(this, object : AmbientLifecycleObserver.AmbientLifecycleCallback {
@@ -188,6 +204,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         getSharedPreferences("wear_update", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(updateListener)
         openPendingUpdate()
         WearBreakReminder.reconcile(this)
+        WearShiftOngoing.reconcile(this)
+        if (WearPreferences.keepAwake(this)) requestAmbientNotification()
         Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
             phoneLink = if (nodes.isEmpty()) "Disconnected" else if (nodes.any { it.isNearby }) "Nearby" else "Remote link"
             if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) render()
@@ -400,7 +418,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             WearPreferences.toggleHapticGeofence(this); showInfo()
         }, rowParams(5))
         panel.addView(preferenceButton("KEEP SCREEN AWAKE", WearPreferences.keepAwake(this)) {
-            WearPreferences.toggleKeepAwake(this); showInfo()
+            WearPreferences.toggleKeepAwake(this); WearShiftOngoing.reconcile(this);
+            if (WearPreferences.keepAwake(this)) requestAmbientNotification()
+            render(); scheduleDim()
         }, rowParams(5))
         panel.addView(preferenceButton("BATTERY SAVER DISPLAY", WearPreferences.batterySaverDisplay(this)) {
             WearPreferences.toggleBatterySaverDisplay(this); showInfo(); scheduleDim()
@@ -603,6 +623,28 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         setOnClickListener { action() }
     }
 
+    private fun confirmEndBreak() {
+        if (breakConfirmation?.isShowing == true) return
+        val original = WearState.read(this) ?: return
+        handler.removeCallbacks(dimTask)
+        breakConfirmation = AlertDialog.Builder(this)
+            .setTitle("End break?")
+            .setMessage("Are you sure you want to end your break?")
+            .setNegativeButton("Stay on break", null)
+            .setPositiveButton("End break") { _, _ ->
+                val current = WearState.read(this)
+                if (current?.active == true && current.activity == "break" &&
+                    current.activityStarted == original.activityStarted && "end_break" in current.actions) {
+                    WearTransport.sendAction(this, "end_break")
+                    resync()
+                } else { request(); render() }
+            }
+            .create().apply {
+                setOnDismissListener { breakConfirmation = null; scheduleDim() }
+                show()
+            }
+    }
+
     private fun confirmAction(title: String, message: String, action: String) {
         AlertDialog.Builder(this)
             .setTitle(title)
@@ -648,6 +690,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     private fun render() {
+        WearShiftOngoing.reconcile(this)
         if (dimmed || systemAmbient) {
             // Incoming phone snapshots must not wake the screen or rebuild it every second.
             return
@@ -808,6 +851,10 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         elevation = 0f
         setOnClickListener {
+            if (action == "end_break") {
+                confirmEndBreak()
+                return@setOnClickListener
+            }
             isEnabled = false
             actionStatus.text = "SENDING TO PHONE…"
             WearTransport.sendAction(this@WearMainActivity, action)

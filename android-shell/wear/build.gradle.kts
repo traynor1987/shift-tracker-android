@@ -19,8 +19,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 30
         targetSdk = 35
-        versionCode = 58
-        versionName = "2.2.53"
+        versionCode = 59
+        versionName = "2.2.54"
     }
     signingConfigs {
         if (releaseSigningReady) create("shiftTrackerRelease") {
@@ -40,6 +40,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.wear:wear:1.3.0")
+    implementation("androidx.wear:wear-ongoing:1.0.0")
     implementation("androidx.wear.tiles:tiles:1.6.2")
     implementation("androidx.wear.protolayout:protolayout:1.4.2")
     implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1")

@@ -1,3 +1,11 @@
+# Wear 2.2.54 — confirm break end and retain ambient shift
+
+End Break now asks for confirmation; cancel/Back leaves the break running. Confirm rechecks the current break start and allowed action before sending via existing transport. The foreground dim timer is suspended while the dialog is open.
+
+An OngoingActivity notification now represents an active shift when Keep Screen Awake is enabled. Reconciled on state save, resume and render; cancelled on shift end or preference off. Notification permission requested once on Android 13+. Uses the existing main activity as tap target, without forced background launches or a new service. Wear OS 5+ supports ambient retention through ongoing activities; older devices, disabled notifications/AOD and manufacturer settings still need device checks. Actual battery savings unmeasured.
+
+Validation: CI tests/lint/signed build; physical confirmation, cancel, ambient retention/wrist wake, permission denied and shift-end checks remain needed.
+
 # Wear 2.2.53 — stable scrolling and main-screen polish
 
 Settings and same-page refreshes retain their ScrollView and restore position inside onLayout before drawing. Removes posted top-of-page flashes and cancels pressed child controls before swipe navigation. Soft dim timeout applies only on Main (native ambient still follows system settings).
