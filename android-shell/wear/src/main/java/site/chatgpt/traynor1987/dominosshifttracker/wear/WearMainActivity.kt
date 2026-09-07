@@ -38,7 +38,7 @@ import kotlin.math.abs
 import androidx.wear.ambient.AmbientLifecycleObserver
 
 class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
-    private enum class Screen { MAIN, SUMMARY, TASKS, INFO, BATTERY }
+    private enum class Screen { MAIN, SUMMARY, TASKS, INFO, BATTERY, TIMELINE, RECAP, VIBRATIONS }
 
     private lateinit var root: FrameLayout
     private lateinit var main: FrameLayout
@@ -187,7 +187,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
                 if (wakeDisplay() || SystemClock.elapsedRealtime() < wakeGuardUntil) return
                 scheduleDim()
                 when (screen) {
-                    Screen.BATTERY -> showInfo()
+                    Screen.BATTERY, Screen.VIBRATIONS -> showInfo()
+                    Screen.TIMELINE -> showSummary()
+                    Screen.RECAP -> showMain()
                     Screen.TASKS -> showSummary()
                     Screen.SUMMARY, Screen.INFO -> showMain()
                     Screen.MAIN -> Unit
@@ -353,7 +355,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
                         Screen.SUMMARY -> if (horizontal > 0) showMain() else Unit
                         Screen.TASKS -> if (horizontal > 0) showSummary() else Unit
                         Screen.INFO -> if (horizontal < 0) showMain() else Unit
-                        Screen.BATTERY -> if (horizontal > 0) showInfo() else Unit
+                        Screen.BATTERY, Screen.VIBRATIONS -> if (horizontal > 0) showInfo() else Unit
+                        Screen.TIMELINE -> if (horizontal > 0) showSummary() else Unit
+                        Screen.RECAP -> if (horizontal > 0) showMain() else Unit
                     }
                     return true
                 }
@@ -430,6 +434,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         panel.addView(summaryRow("POWER SAVER", if (getSystemService(android.os.PowerManager::class.java).isPowerSaveMode) "On" else "Off"))
         panel.addView(summaryRow("PHONE LINK", phoneLink))
         panel.addView(summaryText("Link status checked when app opens; sync age shows data freshness.", 10f, Color.LTGRAY, false), rowParams(5))
+        panel.addView(summaryAction("VIBRATION PREVIEW", Color.rgb(38, 45, 55)) { showVibrations() }, rowParams(8))
+        panel.addView(summaryAction("LAST SHIFT RECAP", Color.rgb(38, 45, 55)) { showRecap() }, rowParams(8))
         panel.addView(summaryText("MAIN SCREEN", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
         panel.addView(summaryAction("TIMER · ${if (WearPreferences.mainTimer(this) == "shift") "SHIFT" else "ACTIVITY"}", Color.rgb(76, 85, 96)) {
             WearPreferences.cycleMainTimer(this); showInfo()
@@ -498,6 +504,67 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         presentPage(Screen.INFO, panel)
     }
 
+    private fun journeyPanel(title: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(28), dp(30), dp(28), dp(28))
+        addView(summaryText(title, 15f, Color.rgb(35, 161, 255), true), rowParams(8))
+    }
+
+    private fun showTimeline() {
+        timer.stop()
+        val panel = journeyPanel("DELIVERY TIMELINE")
+        val item = WearJourney.timeline(this)
+        if (item == null) panel.addView(summaryText("Your next delivery will appear here.", 12f, Color.LTGRAY, false), rowParams(10))
+        else {
+            panel.addView(summaryText(if (item.optString("type") == "delivery_double") "DOUBLE" else "SINGLE", 16f, Color.WHITE, true), rowParams(8))
+            val start = item.optLong("start"); val exit = item.optLong("exit"); val returned = item.optLong("return")
+            panel.addView(summaryRow("DISPATCH STARTED", recordedTime(start)))
+            panel.addView(summaryRow("LEFT STORE", recordedTime(exit)))
+            panel.addView(summaryRow("DISPATCH TO EXIT", WearDisplayPolicy.recordedInterval(start, exit)))
+            val customers = item.optJSONArray("customers")
+            if (customers == null || customers.length() == 0) panel.addView(summaryText("No delivery confirmation received yet", 11f, Color.LTGRAY, false), rowParams(8))
+            else for (i in 0 until customers.length()) panel.addView(summaryRow("CUSTOMER ${i + 1} · SYNCED", recordedTime(customers.optLong(i))))
+            panel.addView(summaryRow("RETURNED", recordedTime(returned)))
+            panel.addView(summaryRow("TIME OUT", WearDisplayPolicy.recordedInterval(exit, returned)))
+            if (item.optInt("early") > 0) panel.addView(summaryRow("EARLY DISPATCH", WearDisplayPolicy.duration(item.optLong("early"))))
+            panel.addView(summaryText("Customer times show when the phone update was received, not the exact doorstep time. Missing events stay unrecorded.", 10f, Color.LTGRAY, false), rowParams(10))
+        }
+        panel.addView(summaryAction("BACK TO SUMMARY", Color.rgb(38, 45, 55)) { showSummary() }, rowParams(10))
+        presentPage(Screen.TIMELINE, panel)
+    }
+
+    private fun showRecap() {
+        timer.stop(); WearJourney.acknowledge(this)
+        val panel = journeyPanel("SHIFT COMPLETE")
+        val item = WearJourney.recap(this)
+        if (item == null) panel.addView(summaryText("Your recap appears after clocking out.", 12f, Color.LTGRAY, false), rowParams(10))
+        else {
+            panel.addView(summaryText("${item.optInt("deliveries")} deliveries · ${item.optInt("runs")} runs", 16f, Color.WHITE, true), rowParams(10))
+            panel.addView(summaryRow("PAID TIME", WearDisplayPolicy.shiftDuration(item.optLong("paid"))))
+            panel.addView(summaryRow("BREAK", WearDisplayPolicy.shiftDuration(item.optLong("break"))))
+            if (WearPreferences.showEarnings(this)) {
+                panel.addView(summaryRow("WAGES", item.optString("pay").ifBlank { "—" }))
+                panel.addView(summaryRow("TOTAL", item.optString("total").ifBlank { "—" }))
+            }
+            panel.addView(summaryRow("MILES", item.optString("miles").ifBlank { "Not recorded" }))
+            panel.addView(summaryRow("WATCH BATTERY", item.optString("battery").ifBlank { "Not recorded" }))
+            panel.addView(summaryText("Last synced totals before clock-out · ${recordedTime(item.optLong("asOf"))}. Final totals are on your phone.", 10f, Color.LTGRAY, false), rowParams(10))
+        }
+        panel.addView(summaryAction("DONE", Color.rgb(28, 157, 130)) { showMain() }, rowParams(12))
+        presentPage(Screen.RECAP, panel)
+    }
+
+    private fun showVibrations() {
+        timer.stop()
+        val panel = journeyPanel("VIBRATION PREVIEW")
+        panel.addView(summaryText("Tap to learn each pattern. Delivery alerts follow the Geofence vibration setting; break alerts follow Break target vibration.", 11f, Color.LTGRAY, false), rowParams(8))
+        listOf("left" to "LEFT STORE", "delivered" to "DELIVERY CONFIRMED", "returned" to "RETURNED", "break" to "BREAK TARGET").forEach { (event, label) ->
+            panel.addView(summaryAction(label, Color.rgb(38, 45, 55)) { WearTransitionAlerts.preview(this, event) }, rowParams(8))
+        }
+        panel.addView(summaryAction("BACK TO SETTINGS", Color.rgb(8, 117, 209)) { showInfo() }, rowParams(10))
+        presentPage(Screen.VIBRATIONS, panel)
+    }
+
     private fun showBatteryReport() {
         timer.stop(); root.keepScreenOn = false
         WearBatteryReport.sample(this)
@@ -550,6 +617,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             setPadding(dp(28), dp(26), dp(28), dp(26))
         }
         panel.addView(summaryText("SHIFT SUMMARY", 12f, Color.rgb(35, 161, 255), true))
+        panel.addView(summaryAction("DELIVERY TIMELINE", Color.rgb(8, 117, 209)) { showTimeline() }, rowParams(8))
         if (snapshot == null || snapshot.disconnected || !snapshot.active) {
             panel.addView(summaryText(if (snapshot?.disconnected != false) "PHONE DISCONNECTED" else "NO ACTIVE SHIFT", 18f, Color.WHITE, true), rowParams(12))
         } else {
@@ -796,11 +864,17 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             // Incoming phone snapshots must not wake the screen or rebuild it every second.
             return
         }
+        if (WearState.read(this)?.active == false && WearJourney.pending(this)) {
+            showRecap(); return
+        }
         if (screen != Screen.MAIN) {
             when (screen) {
                 Screen.INFO -> showInfo()
                 Screen.SUMMARY -> showSummary()
                 Screen.BATTERY -> showBatteryReport()
+                Screen.TIMELINE -> showTimeline()
+                Screen.RECAP -> showRecap()
+                Screen.VIBRATIONS -> showVibrations()
                 Screen.TASKS -> showQuickTasks()
                 else -> Unit
             }

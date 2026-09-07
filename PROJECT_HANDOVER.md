@@ -583,3 +583,7 @@ its separately stored photo blobs or data may still be required.
 
 ## 2.2.60 — Watch insights
 Custom main timer (activity/shift) and stat; breaks override with countdown, measured target ring and overtime. New settings sync both ways through the existing per-key protocol. Whole-watch battery observations retain current and last five completed reports in watch-local preferences; charging and sampling gaps suppress net rate. No extra polling service or wake lock. Phone UI 2.1.198 adds the four new settings. Hardware validation of layout, ambient behaviour and battery sampling remains required.
+
+
+## 2.2.61 — Delivery timeline, vibration previews, shift recap
+Watch summary links to latest delivery timeline: phone-recorded start/exit/return, measured intervals and explicitly labelled customer sync times. Watch-local last shift recap opens once after observed clock-out, retains last synced totals with timestamp and battery observation, and reopens in settings. Final financial records remain on phone. Adds delivery-confirmed vibration, deduplicated by activity/customer; previews existing exit/return/break and new confirmation patterns. Existing alert toggles retained. No new bridge or PWA changes.

@@ -31,6 +31,7 @@ object WearState {
         val previous = read(context)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
         WearBatteryReport.sample(context, next)
+        WearJourney.capture(context, previous, next)
         WearBreakReminder.reconcile(context)
         WearShiftOngoing.reconcile(context)
         WearRecentRuns.capture(context, previous, next)
