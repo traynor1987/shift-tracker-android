@@ -579,3 +579,7 @@ its separately stored photo blobs or data may still be required.
   renderer from leaving a permanent black surface. The recovery reloads only
   the exact trusted hosted PWA and does not clear localStorage, IndexedDB,
   backups, photos, permissions or the active delivery foreground service.
+
+
+## 2.2.60 — Watch insights
+Custom main timer (activity/shift) and stat; breaks override with countdown, measured target ring and overtime. New settings sync both ways through the existing per-key protocol. Whole-watch battery observations retain current and last five completed reports in watch-local preferences; charging and sampling gaps suppress net rate. No extra polling service or wake lock. Phone UI 2.1.198 adds the four new settings. Hardware validation of layout, ambient behaviour and battery sampling remains required.

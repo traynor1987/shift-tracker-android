@@ -9,13 +9,15 @@ import site.chatgpt.traynor1987.dominosshifttracker.settings.WearSettingsStore
 object WearSettingsSync {
     fun store(context: Context) = WearSettingsStore(context.applicationContext, "watch", { values ->
         val display = context.getSharedPreferences("shift_tracker_wear_preferences_v1", Context.MODE_PRIVATE).edit()
-        listOf("keep_awake", "battery_saver_display", "show_earnings", "haptic_geofence").forEach { key -> values[key]?.let { display.putBoolean(key, it.toBooleanStrict()) } }
+        listOf("keep_awake", "battery_saver_display", "show_earnings", "haptic_geofence", "break_ring", "battery_tracking").forEach { key -> values[key]?.let { display.putBoolean(key, it.toBooleanStrict()) } }
         values["dim_delay"]?.let { display.putLong("dim_delay", it.toLong()) }
+        listOf("main_timer", "main_stat").forEach { key -> values[key]?.let { display.putString(key, it) } }
         display.apply()
         val goals = context.getSharedPreferences("wear_goals_v1", Context.MODE_PRIVATE).edit()
         values["break_alert"]?.let { goals.putBoolean("break_alert", it.toBooleanStrict()) }
         listOf("break_minutes", "deliveries", "hours").forEach { key -> values[key]?.let { goals.putInt(key, it.toInt()) } }
         goals.apply()
+        WearBatteryReport.sample(context)
         WearBreakReminder.reconcile(context)
         WearShiftOngoing.reconcile(context)
         WearTileRefresh.request(context)
@@ -23,6 +25,10 @@ object WearSettingsSync {
     }, {})
     fun initialize(context: Context) {
         store(context).initializeWatch(mapOf(
+            "main_timer" to WearPreferences.mainTimer(context),
+            "main_stat" to WearPreferences.mainStat(context),
+            "break_ring" to WearPreferences.breakRing(context).toString(),
+            "battery_tracking" to WearPreferences.batteryTracking(context).toString(),
             "keep_awake" to WearPreferences.keepAwake(context).toString(),
             "battery_saver_display" to WearPreferences.batterySaverDisplay(context).toString(),
             "show_earnings" to WearPreferences.showEarnings(context).toString(),

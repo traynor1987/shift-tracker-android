@@ -37,12 +37,13 @@ import kotlin.math.abs
 import androidx.wear.ambient.AmbientLifecycleObserver
 
 class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
-    private enum class Screen { MAIN, SUMMARY, TASKS, INFO }
+    private enum class Screen { MAIN, SUMMARY, TASKS, INFO, BATTERY }
 
     private lateinit var root: FrameLayout
     private lateinit var main: FrameLayout
     private lateinit var dial: WearDialView
     private lateinit var state: TextView
+    private lateinit var timerLabel: TextView
     private lateinit var timer: Chronometer
     private lateinit var detail: TextView
     private lateinit var contextDetail: TextView
@@ -131,6 +132,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         if (!systemAmbient) handler.postDelayed(dimTick, 60_000L)
     }
     private fun showDim() {
+        WearBatteryReport.sample(this)
         root.removeAllViews()
         val snapshot = WearState.read(this)
         val now = System.currentTimeMillis()
@@ -184,6 +186,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
                 if (wakeDisplay() || SystemClock.elapsedRealtime() < wakeGuardUntil) return
                 scheduleDim()
                 when (screen) {
+                    Screen.BATTERY -> showInfo()
                     Screen.TASKS -> showSummary()
                     Screen.SUMMARY, Screen.INFO -> showMain()
                     Screen.MAIN -> Unit
@@ -296,6 +299,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }, LinearLayout.LayoutParams(dp(48), dp(24)).apply { bottomMargin = dp(4) })
         state = text(17f, Color.WHITE)
         panel.addView(state)
+        timerLabel = text(8f, Color.LTGRAY).apply { visibility = View.GONE }
+        panel.addView(timerLabel)
         timer = Chronometer(this).apply {
             textSize = 32f
             setTypeface(typeface, Typeface.BOLD)
@@ -347,6 +352,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
                         Screen.SUMMARY -> if (horizontal > 0) showMain() else Unit
                         Screen.TASKS -> if (horizontal > 0) showSummary() else Unit
                         Screen.INFO -> if (horizontal < 0) showMain() else Unit
+                        Screen.BATTERY -> if (horizontal > 0) showInfo() else Unit
                     }
                     return true
                 }
@@ -423,6 +429,20 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         panel.addView(summaryRow("POWER SAVER", if (getSystemService(android.os.PowerManager::class.java).isPowerSaveMode) "On" else "Off"))
         panel.addView(summaryRow("PHONE LINK", phoneLink))
         panel.addView(summaryText("Link status checked when app opens; sync age shows data freshness.", 10f, Color.LTGRAY, false), rowParams(5))
+        panel.addView(summaryText("MAIN SCREEN", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
+        panel.addView(summaryAction("TIMER · ${if (WearPreferences.mainTimer(this) == "shift") "SHIFT" else "ACTIVITY"}", Color.rgb(76, 85, 96)) {
+            WearPreferences.cycleMainTimer(this); showInfo()
+        }, rowParams(5))
+        panel.addView(summaryAction("STAT · ${WearPreferences.mainStats[WearPreferences.mainStat(this)]?.uppercase()}", Color.rgb(76, 85, 96)) {
+            WearPreferences.cycleMainStat(this); showInfo()
+        }, rowParams(5))
+        panel.addView(preferenceButton("BREAK PROGRESS RING", WearPreferences.breakRing(this)) {
+            WearPreferences.toggleBreakRing(this); showInfo()
+        }, rowParams(5))
+        panel.addView(preferenceButton("BATTERY TRACKING", WearPreferences.batteryTracking(this)) {
+            WearPreferences.toggleBatteryTracking(this); showInfo()
+        }, rowParams(5))
+        panel.addView(summaryAction("SHIFT BATTERY REPORTS", Color.rgb(8, 117, 209)) { showBatteryReport() }, rowParams(5))
         panel.addView(summaryText("BREAK & GOALS", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
         panel.addView(summaryAction("BREAK TARGET · ${WearGoals.breakMinutes(this)} MIN", Color.rgb(76, 85, 96)) {
             WearGoals.cycle(this, "break_minutes", listOf(5, 10, 15, 20, 30, 45, 60), WearGoals.breakMinutes(this))
@@ -475,6 +495,39 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             this.text = "ABOUT\nShift Tracker Wear $version\n\nSwipe left to return"
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
         presentPage(Screen.INFO, panel)
+    }
+
+    private fun showBatteryReport() {
+        timer.stop(); root.keepScreenOn = false
+        WearBatteryReport.sample(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(28), dp(30), dp(28), dp(26))
+        }
+        panel.addView(summaryText("SHIFT BATTERY", 14f, Color.rgb(35, 161, 255), true))
+        panel.addView(summaryText("Whole-watch usage during observed shift time", 10f, Color.LTGRAY, false), rowParams(7))
+        val reports = WearBatteryReport.reports(this)
+        if (reports.isEmpty()) panel.addView(summaryText(if (WearPreferences.batteryTracking(this)) "Your next shift starts a report. Open the app during your shift to record battery observations." else "Enable Battery Tracking in watch settings to start a report.", 12f, Color.WHITE, false), rowParams(12))
+        reports.forEach { report ->
+            val started = report.optLong("startAt"); val ended = report.optLong("lastAt")
+            val date = android.text.format.DateFormat.format("dd MMM · HH:mm", java.util.Date(started)).toString()
+            val label = if (report.optBoolean("finished")) date else "CURRENT · $date"
+            panel.addView(summaryText(label, 11f, Color.rgb(35, 161, 255), true), rowParams(15))
+            panel.addView(summaryText("${report.optInt("start")}% → ${report.optInt("last")}%", 21f, Color.WHITE, true), rowParams(5))
+            val drop = WearInsightPolicy.netBatteryDrop(report.optInt("start"), report.optInt("last")) ?: 0
+            panel.addView(summaryText(if (drop >= 0) "$drop percentage points used" else "${-drop} percentage points gained", 11f, Color.LTGRAY, false), rowParams(3))
+            panel.addView(summaryRow("OBSERVED", WearDisplayPolicy.shiftDuration((ended - started).coerceAtLeast(0) / 1000)))
+            panel.addView(summaryRow("LAST SAMPLE", recordedTime(ended)))
+            panel.addView(summaryRow("DIM SETTING", report.optString("saver")))
+            val charging = report.optBoolean("charging"); val gaps = report.optBoolean("gaps")
+            val rate = WearInsightPolicy.netBatteryRate(report.optInt("start"), report.optInt("last"), ended - started, charging, gaps)
+            if (rate != null) panel.addView(summaryText(String.format(java.util.Locale.UK, "%.1f points/hour · net change", rate), 11f, Color.WHITE, false), rowParams(5))
+            if (charging) panel.addView(summaryText("Charging or battery increase detected", 10f, Color.rgb(224, 163, 56), false), rowParams(4))
+            if (gaps) panel.addView(summaryText("Gaps between observations · rate unavailable", 10f, Color.LTGRAY, false), rowParams(4))
+        }
+        panel.addView(summaryText("Includes other watch apps. These reports do not prove savings from dim mode. Current report and last five completed reports are kept.", 10f, Color.LTGRAY, false), rowParams(14))
+        panel.addView(summaryAction("BACK TO SETTINGS", Color.rgb(38, 45, 55)) { showInfo() }, rowParams(10))
+        presentPage(Screen.BATTERY, panel)
     }
 
     private fun showMain() {
@@ -736,6 +789,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     private fun render() {
+        WearBatteryReport.sample(this)
         WearShiftOngoing.reconcile(this)
         if (dimmed || systemAmbient) {
             // Incoming phone snapshots must not wake the screen or rebuild it every second.
@@ -745,6 +799,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             when (screen) {
                 Screen.INFO -> showInfo()
                 Screen.SUMMARY -> showSummary()
+                Screen.BATTERY -> showBatteryReport()
                 Screen.TASKS -> showQuickTasks()
                 else -> Unit
             }
@@ -768,6 +823,10 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
 
         timer.textSize = 32f
+        timerLabel.visibility = View.GONE
+        timer.setOnChronometerTickListener(null)
+        dial.breakFraction = null
+        dial.contentDescription = null
         state.textSize = 15f
         if (snapshot == null || snapshot.disconnected) {
             root.keepScreenOn = false
@@ -827,21 +886,31 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         state.textSize = 15f
         state.setTypeface(state.typeface, Typeface.BOLD)
         state.text = WearDisplayPolicy.activityTitle(snapshot.activity)
-        val start = if (snapshot.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
+        val useShiftTimer = WearPreferences.mainTimer(this) == "shift"
+        if (useShiftTimer && snapshot.activity != "break") {
+            timerLabel.text = "SHIFT ELAPSED"
+            timerLabel.visibility = View.VISIBLE
+        }
+        val start = if (snapshot.activity == "idle" || useShiftTimer) snapshot.shiftStarted else snapshot.activityStarted
         val now = System.currentTimeMillis()
         timer.base = if (start in 1..now + 60_000L) SystemClock.elapsedRealtime() - (now - start).coerceAtLeast(0L) else SystemClock.elapsedRealtime()
         timer.setOnChronometerTickListener(null)
         timer.isCountDown = false
         val breakDue = WearBreakReminder.due(this, snapshot)
         if (breakDue != null) {
-            timer.base = SystemClock.elapsedRealtime() + (breakDue - now).coerceAtLeast(0)
-            timer.isCountDown = true
-            timer.setOnChronometerTickListener {
-                if (System.currentTimeMillis() >= breakDue) {
-                    it.stop(); it.text = "0:00"; state.text = "BREAK TARGET MET"
-                    WearBreakReminder.reconcile(this)
-                }
+            val targetMs = WearGoals.breakMinutes(this) * 60_000L
+            fun updateBreak(at: Long) {
+                val over = at >= breakDue
+                timer.text = WearInsightPolicy.breakClock(snapshot.activityStarted, targetMs, at)
+                state.text = if (over) "BREAK TARGET MET" else "BREAK"
+                val breakColour = if (over) Color.rgb(239, 105, 90) else Color.rgb(224, 163, 56)
+                state.setTextColor(breakColour); dial.accent = breakColour
+                dial.breakFraction = if (WearPreferences.breakRing(this)) WearInsightPolicy.breakProgress(snapshot.activityStarted, targetMs, at) else null
+                dial.contentDescription = if (over) "Break target reached" else "Break target ${(WearInsightPolicy.breakProgress(snapshot.activityStarted, targetMs, at) * 100).toInt()} percent elapsed"
             }
+            timer.base = SystemClock.elapsedRealtime() - (now - snapshot.activityStarted).coerceAtLeast(0L)
+            timer.setOnChronometerTickListener { updateBreak(System.currentTimeMillis()) }
+            updateBreak(now)
         }
         timer.start()
         val where = when (snapshot.storeStatus) {
@@ -854,7 +923,17 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             "CUSTOMER ${snapshot.deliveredCustomers.coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
         } else ""
         val earnings = if (WearPreferences.showEarnings(this)) " • ${snapshot.pay}" else ""
-        detail.text = "${snapshot.deliveries} deliveries$earnings${if (!delivery && snapshot.activity != "idle" && snapshot.name.isNotBlank()) "\n${snapshot.name}" else if (customerProgress.isNotBlank()) "\n$customerProgress" else ""}"
+        val selectedStat = when (WearPreferences.mainStat(this)) {
+            "deliveries" -> "${snapshot.deliveries} deliveries"
+            "earnings" -> if (WearPreferences.showEarnings(this)) snapshot.pay else "Earnings hidden"
+            "mileage" -> "${snapshot.miles.ifBlank { "—" }} mi"
+            "delivery_goal" -> if (WearGoals.deliveries(this) > 0) "${snapshot.deliveries}/${WearGoals.deliveries(this)} deliveries" else "Delivery goal off"
+            "paid_goal" -> if (WearGoals.hours(this) > 0) "Paid ${WearDisplayPolicy.shiftDuration(snapshot.paidTimeSeconds)} / ${WearGoals.hours(this)}h" else "Paid hours goal off"
+            "none" -> ""
+            else -> "${snapshot.deliveries} deliveries$earnings"
+        }
+        val activityDetail = if (customerProgress.isNotBlank()) customerProgress else if (!delivery && snapshot.activity !in setOf("idle", "break")) snapshot.name else ""
+        detail.text = listOf(selectedStat, activityDetail).filter { it.isNotBlank() }.joinToString("\n")
         contextDetail.text = if (snapshot.activity == "break") "${WearGoals.breakMinutes(this)} MIN TARGET · END MANUALLY" else WearDisplayPolicy.contextLine(snapshot, where)
 
         val deliveredLabel = if (snapshot.requiredCustomers > 1) {

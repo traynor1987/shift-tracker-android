@@ -33,6 +33,19 @@ object WearPreferences {
         WearSettingsSync.change(context, "dim_delay", next.toString())
     }
 
+    val mainStats = linkedMapOf("deliveries_earnings" to "Deliveries + earnings", "deliveries" to "Deliveries", "earnings" to "Earnings", "mileage" to "Mileage", "delivery_goal" to "Delivery goal", "paid_goal" to "Paid hours goal", "none" to "None")
+    fun mainTimer(c: Context) = prefs(c).getString("main_timer", "activity") ?: "activity"
+    fun mainStat(c: Context) = prefs(c).getString("main_stat", "deliveries_earnings") ?: "deliveries_earnings"
+    fun breakRing(c: Context) = prefs(c).getBoolean("break_ring", true)
+    fun batteryTracking(c: Context) = prefs(c).getBoolean("battery_tracking", true)
+    fun cycleMainTimer(c: Context) = WearSettingsSync.change(c, "main_timer", if (mainTimer(c) == "shift") "activity" else "shift")
+    fun cycleMainStat(c: Context) {
+        val choices = mainStats.keys.toList()
+        WearSettingsSync.change(c, "main_stat", choices[(choices.indexOf(mainStat(c)) + 1) % choices.size])
+    }
+    fun toggleBreakRing(c: Context) = toggle(c, "break_ring", true)
+    fun toggleBatteryTracking(c: Context) = toggle(c, "battery_tracking", true)
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun toggle(context: Context, key: String, default: Boolean): Boolean {
         val next = !prefs(context).getBoolean(key, default)

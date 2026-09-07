@@ -11,6 +11,9 @@ class WearDialView(context: Context) : View(context) {
     var accent: Int = Color.rgb(8, 117, 209)
         set(value) { if (field != value) { field = value; invalidate() } }
     var progress: Float = .5f
+    var breakFraction: Float? = null
+        set(value) { if (field != value) { field = value; invalidate() } }
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     override fun onDraw(canvas: Canvas) {
         val radius = minOf(width, height) * .465f
@@ -21,6 +24,10 @@ class WearDialView(context: Context) : View(context) {
         canvas.drawCircle(x, y, radius, paint)
         paint.strokeCap = Paint.Cap.ROUND
         paint.color = Color.argb(170, Color.red(accent), Color.green(accent), Color.blue(accent))
-        canvas.drawArc(x-radius, y-radius, x+radius, y+radius, 48f, 84f, false, paint)
+        val fraction = breakFraction
+        if (fraction != null) {
+            paint.strokeWidth = resources.displayMetrics.density * 3f
+            canvas.drawArc(x-radius, y-radius, x+radius, y+radius, -90f, 360f * fraction.coerceIn(0f, 1f), false, paint)
+        } else canvas.drawArc(x-radius, y-radius, x+radius, y+radius, 48f, 84f, false, paint)
     }
 }
