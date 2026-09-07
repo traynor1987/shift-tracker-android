@@ -85,6 +85,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
     }
 
+    private var ambientMinute = Long.MIN_VALUE
+    private var ambientPosition = -1
     private var dimmed = false
     private var systemAmbient = false
     private var lowBit = false
@@ -137,28 +139,43 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         root.removeAllViews()
         val snapshot = WearState.read(this)
         val now = System.currentTimeMillis()
+        val minute = now / 60_000L
+        if (minute != ambientMinute) {
+            ambientPosition = WearAmbientPosition.next(ambientPosition, kotlin.random.Random.nextInt())
+            ambientMinute = minute
+        }
+        val offset = WearAmbientPosition.offsets[ambientPosition]
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            setPadding(dp(34), dp(34), dp(34), dp(34))
-            // Shift sparse text every minute, with generous round-screen insets.
-            translationX = ((now / 60_000L % 5) - 2).toFloat() * resources.displayMetrics.density
-            translationY = ((now / 300_000L % 5) - 2).toFloat() * resources.displayMetrics.density
+            setPadding(dp(38), dp(32), dp(38), dp(32))
+            translationX = dp(offset.first).toFloat()
+            translationY = dp(offset.second).toFloat()
         }
-        fun line(value: String, size: Float) = TextView(this).apply {
+        fun line(value: String, size: Float, bright: Boolean = false) = TextView(this).apply {
             text = value; textSize = size; gravity = Gravity.CENTER
-            setTextColor(if (lowBit) Color.WHITE else Color.LTGRAY)
+            setTextColor(if (lowBit || bright) Color.WHITE else Color.rgb(155, 155, 155))
             paint.isAntiAlias = !lowBit
             includeFontPadding = false
         }
-        panel.addView(line(android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(now)), 25f))
-        val valid = snapshot != null && !snapshot.disconnected && snapshot.active
-        panel.addView(line(if (valid) WearDisplayPolicy.activityTitle(snapshot!!.activity) else if (snapshot?.active == true) "WAITING FOR PHONE" else "OFF SHIFT", 13f))
-        if (valid) {
-            val start = if (snapshot!!.activity == "idle") snapshot.shiftStarted else snapshot.activityStarted
-            if (start in 1..now) panel.addView(line("Started ${android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(start))}", 12f))
-            panel.addView(line("${snapshot.deliveries} deliveries", 12f))
+        fun add(value: String, size: Float, bright: Boolean = false, gap: Int = 4) {
+            panel.addView(line(value, size, bright), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(gap) })
         }
-        panel.addView(line("Tap or Back to wake", 10f))
+        add(android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(now)), 32f, true, 0)
+        val valid = snapshot != null && !snapshot.disconnected && snapshot.active
+        add(if (valid) WearDisplayPolicy.activityTitle(snapshot!!.activity) else if (snapshot?.active == true) "WAITING FOR PHONE" else "OFF SHIFT", 10f, gap = 8)
+        if (valid) {
+            val start = if (snapshot!!.activity == "idle" || WearPreferences.mainTimer(this) == "shift" && snapshot.activity != "break") snapshot.shiftStarted else snapshot.activityStarted
+            if (start in 1..now) {
+                val minutes = (now - start) / 60_000L
+                val value = if (snapshot.activity == "break") {
+                    val remaining = WearGoals.breakMinutes(this) - minutes
+                    if (remaining > 0) "$remaining min left" else "+${-remaining} min over"
+                } else "${minutes / 60}h ${minutes % 60}m"
+                add(value, 19f, true)
+            }
+            add("${snapshot.deliveries} deliveries", 10f)
+        } else if (snapshot?.active == true) add(WearDisplayPolicy.syncAgeLabel(snapshot.updatedAt), 10f)
+        add("Tap or Back to wake", 9f, gap = 10)
         root.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
     private fun wakeDisplay(): Boolean {
@@ -433,9 +450,26 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         panel.addView(summaryRow("CHARGING", if (battery.isCharging) "Yes" else "No"))
         panel.addView(summaryRow("POWER SAVER", if (getSystemService(android.os.PowerManager::class.java).isPowerSaveMode) "On" else "Off"))
         panel.addView(summaryRow("PHONE LINK", phoneLink))
-        panel.addView(summaryText("Link status checked when app opens; sync age shows data freshness.", 10f, Color.LTGRAY, false), rowParams(5))
+        panel.addView(summaryRow("LAST PHONE UPDATE", recordedTime(snapshot?.updatedAt ?: 0L)))
+        val feedback = WearState.readActionFeedback(this)
+        panel.addView(summaryText(if (feedback?.pending == true) "Pending: ${feedback.action.replace('_', ' ')}" else "No action waiting for a reply", 11f, Color.LTGRAY, false), rowParams(5))
+        if (feedback != null && !feedback.pending) panel.addView(summaryText(if (WearReliabilityPolicy.actionIsPending(feedback.outcome)) "Reply timed out · refresh to check" else feedbackText(feedback), 10f, Color.LTGRAY, false), rowParams(4))
+        panel.addView(summaryAction("REFRESH CONNECTION", Color.rgb(8, 117, 209)) {
+            phoneLink = "Checking…"; request(); showInfo()
+            Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
+                phoneLink = if (nodes.isEmpty()) "Disconnected" else if (nodes.any { it.isNearby }) "Nearby" else "Remote link"
+                if (!dimmed && screen == Screen.INFO) showInfo()
+            }.addOnFailureListener {
+                phoneLink = "Unable to check"
+                if (!dimmed && screen == Screen.INFO) showInfo()
+            }
+        }, rowParams(8))
+        panel.addView(summaryText("Refresh requests the latest phone state. It does not repeat a delivery action.", 10f, Color.LTGRAY, false), rowParams(5))
         panel.addView(summaryAction("VIBRATION PREVIEW", Color.rgb(38, 45, 55)) { showVibrations() }, rowParams(8))
         panel.addView(summaryAction("LAST SHIFT RECAP", Color.rgb(38, 45, 55)) { showRecap() }, rowParams(8))
+        panel.addView(preferenceButton("HOLD DELIVERY BUTTONS", WearPreferences.holdActions(this)) {
+            WearPreferences.toggleHoldActions(this); showInfo()
+        }, rowParams(8))
         panel.addView(summaryText("MAIN SCREEN", 11f, Color.rgb(35, 161, 255), true), rowParams(12))
         panel.addView(summaryAction("TIMER · ${if (WearPreferences.mainTimer(this) == "shift") "SHIFT" else "ACTIVITY"}", Color.rgb(76, 85, 96)) {
             WearPreferences.cycleMainTimer(this); showInfo()
@@ -1055,8 +1089,9 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     }
 
     private fun actionButton(label: String, action: String, colour: Int, pending: Boolean) = TextView(this).apply {
-        text = label
-        textSize = if (label.length > 11) 9f else 10.5f
+        val hold = WearPreferences.holdActions(this@WearMainActivity) && action in setOf("delivered", "back_at_store")
+        text = if (hold) "$label\nHold to confirm" else label
+        textSize = if (hold || label.length > 11) 9f else 10.5f
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTypeface(typeface, Typeface.BOLD)
@@ -1072,15 +1107,25 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             setStroke(dp(1), Color.argb(100, 255, 255, 255))
         }
         elevation = 0f
+        fun submit() {
+            if (!isEnabled || !isAttachedToWindow || dimmed || SystemClock.elapsedRealtime() < wakeGuardUntil || WearState.readActionFeedback(this@WearMainActivity)?.pending == true) return
+            isEnabled = false
+            actionStatus.text = "SENDING TO PHONE…"
+            WearTransport.sendAction(this@WearMainActivity, action)
+            resync()
+        }
         setOnClickListener {
             if (action == "end_break" || action == "break") {
                 confirmBreak(action)
                 return@setOnClickListener
             }
-            isEnabled = false
-            actionStatus.text = "SENDING TO PHONE…"
-            WearTransport.sendAction(this@WearMainActivity, action)
-            resync()
+            if (hold) {
+                actionStatus.text = "HOLD THE BUTTON TO CONFIRM"
+            } else submit()
+        }
+        if (hold) setOnLongClickListener {
+            submit()
+            true
         }
     }
 

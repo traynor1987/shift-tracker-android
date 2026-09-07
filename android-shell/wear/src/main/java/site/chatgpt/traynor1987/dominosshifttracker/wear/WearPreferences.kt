@@ -34,6 +34,8 @@ object WearPreferences {
     }
 
     val mainStats = linkedMapOf("deliveries_earnings" to "Deliveries + earnings", "deliveries" to "Deliveries", "earnings" to "Earnings", "mileage" to "Mileage", "delivery_goal" to "Delivery goal", "paid_goal" to "Paid hours goal", "none" to "None")
+    fun holdActions(c: Context) = prefs(c).getBoolean("hold_actions", false)
+    fun toggleHoldActions(c: Context) = toggle(c, "hold_actions", false)
     fun mainTimer(c: Context) = prefs(c).getString("main_timer", "activity") ?: "activity"
     fun mainStat(c: Context) = prefs(c).getString("main_stat", "deliveries_earnings") ?: "deliveries_earnings"
     fun breakRing(c: Context) = prefs(c).getBoolean("break_ring", true)

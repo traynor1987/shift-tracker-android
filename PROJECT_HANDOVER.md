@@ -587,3 +587,7 @@ Custom main timer (activity/shift) and stat; breaks override with countdown, mea
 
 ## 2.2.61 — Delivery timeline, vibration previews, shift recap
 Watch summary links to latest delivery timeline: phone-recorded start/exit/return, measured intervals and explicitly labelled customer sync times. Watch-local last shift recap opens once after observed clock-out, retains last synced totals with timestamp and battery observation, and reopens in settings. Final financial records remain on phone. Adds delivery-confirmed vibration, deduplicated by activity/customer; previews existing exit/return/break and new confirmation patterns. Existing alert toggles retained. No new bridge or PWA changes.
+
+
+## 2.2.62 — Dim display and interaction protection
+Monochrome dim layout with larger clock, minute-scale duration/break remaining and sparse delivery count. Random bounded offsets change only on the existing minute/ambient update; consecutive positions differ, with no extra animation or wake lock. Synced hold_actions defaults off, optionally requiring a long press for Delivered/Back at Store. Connection details show last phone update and pending reply; Refresh never replays actions. Web 2.1.199 adds the optional control.
