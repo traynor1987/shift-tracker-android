@@ -289,6 +289,13 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_wear_settings:set" -> PhoneWearSettings.edit(this, message.optString("key"), message.optString("value"))
             "shift_tracker_wear_update:check" -> wearUpdateManager.check(message.optBoolean("manual", true))
             "shift_tracker_wear_update:send" -> wearUpdateManager.send()
+            "shift_tracker_dispatch_notification:request_access" -> runCatching {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+            "shift_tracker_dispatch_notification:ack" -> {
+                val id = message.optString("id").trim()
+                if (id.isNotBlank() && id.length <= 160) DispatchNotificationStore.acknowledge(this, id)
+            }
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
@@ -342,6 +349,7 @@ class MainActivity : ComponentActivity() {
             put("bridgeVersion", BRIDGE_VERSION)
             put("trustedOrigin", TRUSTED_ORIGIN)
             put("trackingActive", DeliveryLocationService.isRunning())
+            put("dispatchNotificationAccess", DispatchNotificationStore.accessEnabled(this@MainActivity))
             put("trackedDeliveryId", DeliveryLocationService.activeDeliveryId(this@MainActivity) ?: JSONObject.NULL)
             put("diagnostics", nativeDiagnostics())
             webReleaseStore.installed()?.let {
@@ -352,6 +360,7 @@ class MainActivity : ComponentActivity() {
             WearUpdateManager.version(this@MainActivity)?.let { put("wearVersion", it.first); put("wearVersionCode", it.second) }
         }.toString()
         postNativeMessage(payload)
+        DispatchNotificationStore.deliver(this)
         deliverPendingNativeAction()
         if (refreshWearConnection) refreshWearConnection()
     }
