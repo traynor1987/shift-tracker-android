@@ -48,7 +48,7 @@ object DispatchNotificationStore {
         val serviceClass = DispatchNotificationListenerService::class.java.name
         return Settings.Secure.getString(
             context.contentResolver,
-            Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,
+            "enabled_notification_listeners",
         ).orEmpty().split(':').any { flattened ->
             ComponentName.unflattenFromString(flattened)?.let {
                 it.packageName == context.packageName && it.className == serviceClass
