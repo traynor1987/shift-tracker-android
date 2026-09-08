@@ -1,7 +1,9 @@
 package site.chatgpt.traynor1987.dominosshifttracker
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.Context
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationManagerCompat
@@ -36,10 +38,23 @@ object DispatchNotificationStore {
     private const val PREFS = "shift_tracker_dispatch_notification_v1"
     private const val KEY_EVENT = "pending_event"
     private const val MAX_AGE_MS = 35 * 60_000L
-    private const val MIRROR_MAX_AGE_MS = 2 * 60_000L
 
-    fun accessEnabled(context: Context): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    fun accessEnabled(context: Context): Boolean {
+        // NotificationManagerCompat is the normal source, but some Samsung
+        // builds can briefly report an empty package set immediately after the
+        // user enables the listener. Read Android's enabled-component list as
+        // a fallback so the PWA does not show a false "needs enabling" state.
+        if (NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)) return true
+        val serviceClass = DispatchNotificationListenerService::class.java.name
+        return Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,
+        ).orEmpty().split(':').any { flattened ->
+            ComponentName.unflattenFromString(flattened)?.let {
+                it.packageName == context.packageName && it.className == serviceClass
+            } == true
+        }
+    }
 
     fun record(context: Context, postedAtEpochMs: Long) {
         val now = System.currentTimeMillis()
@@ -47,7 +62,10 @@ object DispatchNotificationStore {
         if (
             !snapshot.shiftActive ||
             snapshot.activity.startsWith("delivery_") ||
-            now - snapshot.updatedAt !in 0..MIRROR_MAX_AGE_MS ||
+            // The native shift mirror is intentionally valid for a full
+            // shift. A two-minute expiry made dispatch detection randomly
+            // fail whenever the driver had not touched the PWA recently.
+            snapshot.isStale ||
             !(snapshot.allowedActions.contains("single") || snapshot.allowedActions.contains("double"))
         ) return
         val receivedAt = postedAtEpochMs.takeIf { it in snapshot.shiftStartedAt..now + 5_000L } ?: now
