@@ -38,7 +38,21 @@ object JamesOsWorkBridge {
         require(shiftId.isNotBlank()&&shiftId.length<=128)
         require(revision in 0..1_000_000L)
         require(retractedAt>0)
-        return JSONObject().put("contractVersion",2).put("eventId","$shiftId:SHIFT_RETRACTED").put("shiftId",shiftId).put("eventType","SHIFT_RETRACTED").put("occurredAt",Instant.ofEpochMilli(retractedAt).toString()).put("revision",revision).put("deleted",true).toString()
+        // Keep the tombstone builder JVM-testable. org.json is an Android
+        // runtime API, while this is also the deterministic contract we replay.
+        return "{\"contractVersion\":2,\"eventId\":${jsonString("$shiftId:SHIFT_RETRACTED")},\"shiftId\":${jsonString(shiftId)},\"eventType\":\"SHIFT_RETRACTED\",\"occurredAt\":${jsonString(Instant.ofEpochMilli(retractedAt).toString())},\"revision\":$revision,\"deleted\":true}"
+    }
+    private fun jsonString(value:String):String = buildString(value.length + 2) {
+        append('"')
+        value.forEach { character -> when (character) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(character)
+        } }
+        append('"')
     }
     private fun startType(activity:String)=when(activity) {"break"->"BREAK_STARTED";"delivery_single","delivery_double"->"DELIVERY_STARTED";"cleaning","prep","task"->"TASK_STARTED";else->null}
     private fun endType(activity:String)=when(activity) {"break"->"BREAK_ENDED";"delivery_single","delivery_double"->"RETURNED_TO_STORE";"cleaning","prep","task"->"TASK_ENDED";else->null}
