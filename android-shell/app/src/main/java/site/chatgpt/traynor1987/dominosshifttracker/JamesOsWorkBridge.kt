@@ -27,6 +27,19 @@ object JamesOsWorkBridge {
             startType(current.activity)?.let {emit(context,current,it,current.activityStartedAt.takeIf {time->time>0}?:current.updatedAt)}
         }
     }
+    /** A source-side deletion retracts normal production evidence.  The
+     * tombstone is retained in the replay ledger so a later James OS restart
+     * cannot silently resurrect the deleted shift. */
+    fun retract(context:Context,shiftId:String,revision:Long,retractedAt:Long):Boolean {
+        val payload=runCatching {retractionPayload(shiftId,revision,retractedAt)}.getOrNull()?:return false
+        remember(context,payload);send(context,payload);return true
+    }
+    internal fun retractionPayload(shiftId:String,revision:Long,retractedAt:Long):String {
+        require(shiftId.isNotBlank()&&shiftId.length<=128)
+        require(revision in 0..1_000_000L)
+        require(retractedAt>0)
+        return JSONObject().put("contractVersion",2).put("eventId","$shiftId:SHIFT_RETRACTED").put("shiftId",shiftId).put("eventType","SHIFT_RETRACTED").put("occurredAt",Instant.ofEpochMilli(retractedAt).toString()).put("revision",revision).put("deleted",true).toString()
+    }
     private fun startType(activity:String)=when(activity) {"break"->"BREAK_STARTED";"delivery_single","delivery_double"->"DELIVERY_STARTED";"cleaning","prep","task"->"TASK_STARTED";else->null}
     private fun endType(activity:String)=when(activity) {"break"->"BREAK_ENDED";"delivery_single","delivery_double"->"RETURNED_TO_STORE";"cleaning","prep","task"->"TASK_ENDED";else->null}
     private fun emit(context:Context,snapshot:ShiftSnapshot,type:String,at:Long) {
@@ -38,7 +51,7 @@ object JamesOsWorkBridge {
         }.toString();remember(context,payload);send(context,payload)
     }
     private fun send(context:Context,payload:String)=runCatching {context.sendBroadcast(Intent(ACTION).setPackage(TARGET).putExtra(EXTRA,payload),PERMISSION)}
-    private fun remember(context:Context,payload:String) {val prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);val old=runCatching {JSONArray(prefs.getString(LEDGER,"[]"))}.getOrDefault(JSONArray());val id=JSONObject(payload).optString("eventId");val next=JSONArray();var seen=false;for(i in 0 until old.length()){val value=old.optString(i);if(value.isNotBlank()&&JSONObject(value).optString("eventId")!=id)next.put(value)else if(value.isNotBlank())seen=true};if(!seen)next.put(payload);val compact=JSONArray();for(i in maxOf(0,next.length()-MAX_EVENTS) until next.length())compact.put(next.optString(i));prefs.edit().putString(LEDGER,compact.toString()).apply()}
+    private fun remember(context:Context,payload:String) {val prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);val old=runCatching {JSONArray(prefs.getString(LEDGER,"[]"))}.getOrDefault(JSONArray());val incoming=JSONObject(payload);val id=incoming.optString("eventId");val revision=incoming.optLong("revision",-1);val next=JSONArray();var replaced=false;for(i in 0 until old.length()){val value=old.optString(i);if(value.isBlank())continue;val existing=runCatching {JSONObject(value)}.getOrNull()?:continue;if(existing.optString("eventId")!=id)next.put(value)else {if(existing.optLong("revision",-1)<revision)next.put(payload)else next.put(value);replaced=true}};if(!replaced)next.put(payload);val compact=JSONArray();for(i in maxOf(0,next.length()-MAX_EVENTS) until next.length())compact.put(next.optString(i));prefs.edit().putString(LEDGER,compact.toString()).apply()}
     fun replay(context:Context) {val values=runCatching {JSONArray(context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString(LEDGER,"[]"))}.getOrDefault(JSONArray());for(i in 0 until values.length())values.optString(i).takeIf {it.isNotBlank()}?.let {send(context,it)}}
     /** Receives only rota fields the web tracker already knows.  Reminder-only
      * rows are intentionally ignored: a notification time is not a shift. */

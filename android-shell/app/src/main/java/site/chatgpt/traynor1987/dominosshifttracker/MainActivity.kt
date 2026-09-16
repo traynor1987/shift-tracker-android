@@ -308,6 +308,13 @@ class MainActivity : ComponentActivity() {
                 postNativeMessage(JSONObject().put("type", "shift_tracker_state:sync_result").put("accepted", snapshot != null).toString())
             }
             "shift_tracker_state:clear" -> NativeShiftState.clear(this)
+            "shift_tracker_shift:retracted" -> {
+                val shiftId=message.optString("shiftId").trim()
+                val revision=message.optLong("revision",-1)
+                val retractedAt=message.optLong("retractedAtEpochMs",0)
+                val accepted=shiftId.length in 1..128&&revision in 0..1_000_000&&retractedAt>0&&JamesOsWorkBridge.retract(this,shiftId,revision,retractedAt)
+                postNativeMessage(JSONObject().put("type","shift_tracker_shift:retraction_result").put("shiftId",shiftId).put("accepted",accepted).toString())
+            }
             "shift_tracker_native_action:ack" -> NativeShiftState.acknowledgeAction(this, message.optString("id"))
             "shift_tracker_native_action:result" -> {
                 val id = message.optString("id")
