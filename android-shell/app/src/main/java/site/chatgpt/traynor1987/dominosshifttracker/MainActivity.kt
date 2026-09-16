@@ -320,6 +320,9 @@ class MainActivity : ComponentActivity() {
             }
             "shift_tracker_rota:sync" -> {
                 val count = RotaReminderScheduler.replace(this, message.optJSONArray("reminders") ?: org.json.JSONArray())
+                // The PWA may include authoritative rota shifts alongside its
+                // reminder plan.  Missing start/end data remains reminder-only.
+                JamesOsWorkBridge.publishRota(this,message.optJSONArray("shifts") ?: org.json.JSONArray())
                 postNativeMessage(JSONObject().put("type", "shift_tracker_rota:sync_result").put("scheduled", count).toString())
             }
             "shift_tracker_rota:request_permission" -> {
