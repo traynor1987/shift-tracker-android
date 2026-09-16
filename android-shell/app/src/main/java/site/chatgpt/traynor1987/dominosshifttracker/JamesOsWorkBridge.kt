@@ -12,10 +12,12 @@ object JamesOsWorkBridge {
     const val ACTION="uk.co.james.action.SHIFT_TRACKER_WORK_EVENT"
     const val EXTRA="uk.co.james.extra.SHIFT_TRACKER_WORK_PAYLOAD"
     const val PERMISSION="uk.co.james.permission.SHIFT_TRACKER_WORK_CONTEXT"
-    private const val TARGET="uk.co.james"
+    /** James OS's stable Android application ID, not its Kotlin namespace. */
+    private const val TARGET="uk.co.james.personal"
     private const val PREFS="james_os_work_bridge_v2"
     private const val LEDGER="events"
     private const val MAX_EVENTS=96
+    internal fun targetPackage()=TARGET
     fun publish(context:Context, previous:ShiftSnapshot?, current:ShiftSnapshot) {
         if(current.shiftId.isBlank()) return
         when { previous?.shiftActive!=true&&current.shiftActive -> emit(context,current,"SHIFT_STARTED",current.shiftStartedAt); previous?.shiftActive==true&&!current.shiftActive -> emit(context,current,"SHIFT_ENDED",current.updatedAt) }
