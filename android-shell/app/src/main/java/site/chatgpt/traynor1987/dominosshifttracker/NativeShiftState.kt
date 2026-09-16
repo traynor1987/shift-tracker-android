@@ -66,10 +66,12 @@ object NativeShiftState {
     )
 
     fun replace(context: Context, raw: JSONObject): ShiftSnapshot? {
+        val previous = read(context)
         val canonical = validate(raw) ?: return null
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SNAPSHOT, canonical.toString()).apply()
         val snapshot = parse(canonical) ?: return null
         refreshSurfaces(context, snapshot)
+        JamesOsWorkBridge.publish(context, previous, snapshot)
         return snapshot
     }
 

@@ -13,6 +13,7 @@
     <!-- Android still owns the final update confirmation. This permission only
          lets the user grant Shift Tracker permission to open that system flow. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="uk.co.james.permission.SHIFT_TRACKER_WORK_CONTEXT" />
 
     <application
         android:allowBackup="false"
