@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.68
+# Shift Tracker Android shell — 2.2.69
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -33,7 +33,19 @@ Current stage:
   picker; imports use the existing PWA validation and explicit restore step
 - the launcher uses the same Shift Tracker icon as the hosted PWA
 
-## Android 2.2.68 frozen-screen recovery
+## Android 2.2.69 blank-screen readiness recovery
+
+Android 2.2.69 also covers a distinct Samsung/WebView failure where a restored
+or newly updated page retains a valid URL but never reaches the trusted PWA
+handshake. Android considers that renderer responsive, so the 2.2.68 renderer
+callback cannot detect it. A generation-safe readiness watchdog now replaces
+the blank WebView once, then rolls back to the previous verified web release if
+the replacement also cannot start. If neither attempt reaches the handshake,
+the shell offers an explicit reload instead of looping. Stale watchdog callbacks
+cannot replace a newer page. This recovery never clears WebView storage or stops
+the native delivery location service.
+
+## Android 2.2.68 frozen-renderer recovery
 
 Android 2.2.68 observes a WebView renderer that remains alive but stops
 responding. The shell replaces the frozen WebView once; if the replacement also

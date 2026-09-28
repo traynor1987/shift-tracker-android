@@ -163,7 +163,10 @@ class MainActivity : ComponentActivity() {
         if (::webView.isInitialized) {
             webView.onResume()
             webView.resumeTimers()
-            armPageReadinessWatchdog(webView)
+            // A live proxy proves this exact WebView already completed the
+            // trusted PWA handshake. Restored process state has no proxy even
+            // when it retained a URL, which is the blank-screen case.
+            if (trustedReplyProxy == null) armPageReadinessWatchdog(webView)
             webView.postDelayed({
                 if (!isFinishing && !isDestroyed && webView.url.isNullOrBlank()) loadTracker()
                 else webView.invalidate()
