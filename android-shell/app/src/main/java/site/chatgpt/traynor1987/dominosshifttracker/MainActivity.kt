@@ -2,6 +2,7 @@ package site.chatgpt.traynor1987.dominosshifttracker
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -27,6 +28,9 @@ import androidx.core.view.WindowCompat
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.wearable.Wearable
@@ -84,6 +88,8 @@ class MainActivity : ComponentActivity() {
     private var localReleaseFallbackAttempted = false
     private var wearConnectionKnown = false
     private var wearConnected = false
+    private val rendererRecoveryPolicy = RendererRecoveryPolicy()
+    private var rendererRecoveryDialog: AlertDialog? = null
 
     private data class PendingFileSave(
         val requestId: String,
@@ -206,6 +212,8 @@ class MainActivity : ComponentActivity() {
         pendingFileSave?.let { sendFileSaveResult(it.requestId, "cancelled", "The save was cancelled") }
         pendingFileSave = null
         cameraCaptureFile?.delete()
+        rendererRecoveryDialog?.dismiss()
+        rendererRecoveryDialog = null
         if (::webView.isInitialized) webView.destroy()
         webReleaseExecutor.shutdownNow()
         super.onDestroy()
@@ -228,6 +236,66 @@ class MainActivity : ComponentActivity() {
         } else failedView.destroy()
     }
 
+    private fun handleRendererGone(failedView: WebView) {
+        if (failedView !== webView || isFinishing || isDestroyed) {
+            failedView.destroy()
+            return
+        }
+        when (rendererRecoveryPolicy.onRendererUnresponsive().action) {
+            RendererRecoveryPolicy.Action.RECREATE_WEBVIEW ->
+                recreateWebViewAfterRendererExit(failedView)
+            RendererRecoveryPolicy.Action.SHOW_RETRY ->
+                showRendererRecoveryRetry(failedView, canWait = false)
+            RendererRecoveryPolicy.Action.NONE -> Unit
+        }
+    }
+
+    private fun handleRendererUnresponsive(stalledView: WebView) {
+        if (stalledView !== webView || isFinishing || isDestroyed) return
+        when (rendererRecoveryPolicy.onRendererUnresponsive().action) {
+            RendererRecoveryPolicy.Action.RECREATE_WEBVIEW -> {
+                // Replace only the renderer. DeliveryLocationService and its
+                // encrypted NativeSampleStore continue independently.
+                // Android reports unresponsiveness only after a sustained
+                // stall. Give a renderer that has just recovered a brief grace
+                // window; its responsive callback cancels this replacement.
+                stalledView.postDelayed({
+                    if (
+                        stalledView === webView &&
+                        rendererRecoveryPolicy.currentAction() == RendererRecoveryPolicy.Action.RECREATE_WEBVIEW
+                    ) recreateWebViewAfterRendererExit(stalledView)
+                }, 1_500L)
+            }
+            RendererRecoveryPolicy.Action.SHOW_RETRY -> showRendererRecoveryRetry(stalledView, canWait = true)
+            RendererRecoveryPolicy.Action.NONE -> Unit
+        }
+    }
+
+    private fun showRendererRecoveryRetry(stalledView: WebView, canWait: Boolean) {
+        if (rendererRecoveryDialog?.isShowing == true || stalledView !== webView) return
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Shift Tracker paused")
+            .setMessage("The app screen stopped responding. GPS samples are still protected. Reload the screen to continue.")
+            .setPositiveButton("Reload screen") { _, _ ->
+                if (stalledView === webView) recreateWebViewAfterRendererExit(stalledView)
+            }
+        if (canWait) builder.setNegativeButton("Keep waiting", null)
+        val dialog = builder.create()
+        rendererRecoveryDialog = dialog
+        dialog.setOnDismissListener {
+            if (rendererRecoveryDialog === dialog) rendererRecoveryDialog = null
+        }
+        runCatching { dialog.show() }.onFailure {
+            if (rendererRecoveryDialog === dialog) rendererRecoveryDialog = null
+        }
+    }
+
+    private fun markRendererResponsive(view: WebView) {
+        if (view !== webView) return
+        rendererRecoveryPolicy.onRendererResponsive()
+        rendererRecoveryDialog?.dismiss()
+    }
+
     private fun configureWebView(view: WebView) {
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
@@ -237,6 +305,23 @@ class MainActivity : ComponentActivity() {
         view.settings.setSupportMultipleWindows(false)
         view.webViewClient = TrustedOriginClient()
         view.webChromeClient = TrustedFileChooser()
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)) {
+            WebViewCompat.setWebViewRenderProcessClient(
+                view,
+                object : WebViewRenderProcessClient() {
+                    override fun onRenderProcessUnresponsive(
+                        view: WebView,
+                        renderer: WebViewRenderProcess?,
+                    ) = handleRendererUnresponsive(view)
+
+                    override fun onRenderProcessResponsive(
+                        view: WebView,
+                        renderer: WebViewRenderProcess?,
+                    ) = markRendererResponsive(view)
+                },
+            )
+        }
 
         // Do not use addJavascriptInterface. AndroidX exposes this object only
         // to the exact allowed HTTPS origin, and every received message is
@@ -886,7 +971,9 @@ class MainActivity : ComponentActivity() {
 
     private inner class TrustedOriginClient : WebViewClient() {
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            recreateWebViewAfterRendererExit(view)
+            // A crashed replacement is part of the same bounded recovery
+            // incident until a page becomes responsive or finishes loading.
+            handleRendererGone(view)
             return true
         }
 
@@ -912,6 +999,7 @@ class MainActivity : ComponentActivity() {
         override fun onPageFinished(view: WebView, url: String) {
             super.onPageFinished(view, url)
             if (isTrustedUri(Uri.parse(url))) {
+                markRendererResponsive(view)
                 val expected = expectedLocalReleaseHello
                 if (expected != null) view.postDelayed({
                     if (expectedLocalReleaseHello == expected && !localReleaseFallbackAttempted) {

@@ -1,4 +1,4 @@
-# Shift Tracker Android shell — 2.2.10
+# Shift Tracker Android shell — 2.2.68
 
 This is deliberately a thin Android wrapper for the published Shift Tracker
 PWA. It does not contain a copy of the web UI and therefore ordinary web
@@ -32,6 +32,16 @@ Current stage:
 - privacy-sanitised JSON backups and CSV exports use Android's create-document
   picker; imports use the existing PWA validation and explicit restore step
 - the launcher uses the same Shift Tracker icon as the hosted PWA
+
+## Android 2.2.68 frozen-screen recovery
+
+Android 2.2.68 observes a WebView renderer that remains alive but stops
+responding. The shell replaces the frozen WebView once; if the replacement also
+stalls, it presents an explicit reload choice instead of entering a reload loop.
+Renderer recovery does not stop the foreground delivery location service, clear
+WebView storage, or discard encrypted pending GPS samples. Phone and Wear
+version codes advance together for the established signed-release workflow;
+Wear behaviour is unchanged.
 
 ## Android 2.2.10 notifications and photo picker
 
