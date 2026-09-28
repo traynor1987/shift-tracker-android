@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
         private const val SHIFT_NOTIFICATION_PERMISSION_REQUEST = 2107
         private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
         private const val MAX_SHARED_FILE_BYTES = 25_000_000
+        private const val PAGE_READY_TIMEOUT_MS = 12_000L
 
         @Volatile
         private var activeActivity: MainActivity? = null
@@ -84,12 +85,12 @@ class MainActivity : ComponentActivity() {
     private var cameraCaptureFile: File? = null
     private var pendingFileSave: PendingFileSave? = null
     private var pendingWorkNotification: String? = null
-    private var expectedLocalReleaseHello: String? = null
-    private var localReleaseFallbackAttempted = false
     private var wearConnectionKnown = false
     private var wearConnected = false
     private val rendererRecoveryPolicy = RendererRecoveryPolicy()
+    private val pageReadinessRecoveryPolicy = PageReadinessRecoveryPolicy()
     private var rendererRecoveryDialog: AlertDialog? = null
+    private var pageReadinessDialog: AlertDialog? = null
 
     private data class PendingFileSave(
         val requestId: String,
@@ -153,7 +154,7 @@ class MainActivity : ComponentActivity() {
         // Android reclaimed it, load the trusted hosted PWA instead of leaving
         // a permanent black surface until the task is force-closed.
         val restored = savedInstanceState?.let { webView.restoreState(it) != null } ?: false
-        if (!restored) loadTracker()
+        if (restored) armPageReadinessWatchdog(webView) else loadTracker()
     }
 
     override fun onResume() {
@@ -162,6 +163,7 @@ class MainActivity : ComponentActivity() {
         if (::webView.isInitialized) {
             webView.onResume()
             webView.resumeTimers()
+            armPageReadinessWatchdog(webView)
             webView.postDelayed({
                 if (!isFinishing && !isDestroyed && webView.url.isNullOrBlank()) loadTracker()
                 else webView.invalidate()
@@ -214,6 +216,8 @@ class MainActivity : ComponentActivity() {
         cameraCaptureFile?.delete()
         rendererRecoveryDialog?.dismiss()
         rendererRecoveryDialog = null
+        pageReadinessDialog?.dismiss()
+        pageReadinessDialog = null
         if (::webView.isInitialized) webView.destroy()
         webReleaseExecutor.shutdownNow()
         super.onDestroy()
@@ -296,6 +300,51 @@ class MainActivity : ComponentActivity() {
         rendererRecoveryDialog?.dismiss()
     }
 
+    private fun armPageReadinessWatchdog(watchedView: WebView) {
+        if (watchedView !== webView || isFinishing || isDestroyed) return
+        val generation = pageReadinessRecoveryPolicy.navigationStarted()
+        watchedView.postDelayed({
+            if (watchedView !== webView || isFinishing || isDestroyed) return@postDelayed
+            val rollbackAvailable = webReleaseStore.installed()?.previousVersion != null
+            when (pageReadinessRecoveryPolicy.onTimeout(generation, rollbackAvailable).action) {
+                PageReadinessRecoveryPolicy.Action.RECREATE_WEBVIEW ->
+                    recreateWebViewAfterRendererExit(watchedView)
+                PageReadinessRecoveryPolicy.Action.ROLLBACK_RELEASE -> {
+                    if (webReleaseStore.rollback() != null) recreateWebViewAfterRendererExit(watchedView)
+                    else showPageReadinessRetry(watchedView)
+                }
+                PageReadinessRecoveryPolicy.Action.SHOW_RETRY ->
+                    showPageReadinessRetry(watchedView)
+                PageReadinessRecoveryPolicy.Action.NONE -> Unit
+            }
+        }, PAGE_READY_TIMEOUT_MS)
+    }
+
+    private fun markPageReady(view: WebView) {
+        if (view !== webView) return
+        pageReadinessRecoveryPolicy.pageReady()
+        pageReadinessDialog?.dismiss()
+    }
+
+    private fun showPageReadinessRetry(stalledView: WebView) {
+        if (pageReadinessDialog?.isShowing == true || stalledView !== webView) return
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Shift Tracker didn't start")
+            .setMessage("The app screen did not finish starting. GPS samples and saved shifts are protected. Reload the screen to continue.")
+            .setPositiveButton("Reload screen") { _, _ ->
+                if (stalledView === webView) recreateWebViewAfterRendererExit(stalledView)
+            }
+            .setNegativeButton("Keep waiting", null)
+            .create()
+        pageReadinessDialog = dialog
+        dialog.setOnDismissListener {
+            if (pageReadinessDialog === dialog) pageReadinessDialog = null
+        }
+        runCatching { dialog.show() }.onFailure {
+            if (pageReadinessDialog === dialog) pageReadinessDialog = null
+        }
+    }
+
     private fun configureWebView(view: WebView) {
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
@@ -355,9 +404,9 @@ class MainActivity : ComponentActivity() {
         when (message.optString("type")) {
             "shift_tracker_shell:hello" -> {
                 // A trusted PWA handshake proves that the active release
-                // reached the bridge. Only this cancels the one-shot startup
-                // fallback timer for a newly activated local release.
-                expectedLocalReleaseHello = null
+                // reached the bridge. Page-finished alone is not sufficient:
+                // a restored WebView can own a URL while remaining blank.
+                markPageReady(webView)
                 sendShellReady()
                 DeliveryLocationService.flushPendingSamples(this)
                 bootstrapVerifiedWebRelease()
@@ -563,7 +612,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun loadTracker() { webView.loadUrl(TRUSTED_ORIGIN) }
+    private fun loadTracker() {
+        armPageReadinessWatchdog(webView)
+        webView.loadUrl(TRUSTED_ORIGIN)
+    }
 
     /** First launch may use the hosted PWA once, then quietly creates the
      * initial verified local copy. Later versions are always user-confirmed. */
@@ -979,7 +1031,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
             trustedReplyProxy = null
-            expectedLocalReleaseHello = webReleaseStore.installed()?.version
+            if (isTrustedUri(Uri.parse(url))) armPageReadinessWatchdog(view)
             super.onPageStarted(view, url, favicon)
         }
 
@@ -1000,16 +1052,6 @@ class MainActivity : ComponentActivity() {
             super.onPageFinished(view, url)
             if (isTrustedUri(Uri.parse(url))) {
                 markRendererResponsive(view)
-                val expected = expectedLocalReleaseHello
-                if (expected != null) view.postDelayed({
-                    if (expectedLocalReleaseHello == expected && !localReleaseFallbackAttempted) {
-                        webReleaseStore.rollback()?.let {
-                            localReleaseFallbackAttempted = true
-                            expectedLocalReleaseHello = null
-                            loadTracker()
-                        }
-                    }
-                }, 8_000L)
                 sendShellReady(); deliverPendingNativeAction()
             }
         }
