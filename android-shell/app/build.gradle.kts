@@ -33,8 +33,8 @@ android {
         targetSdk = 35
         // versionCode is the authoritative Android update comparator. Keep it
         // ahead of the public 2.2.66 / 71 production APK.
-        versionCode = 74
-        versionName = "2.2.69"
+        versionCode = 75
+        versionName = "2.2.70"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 

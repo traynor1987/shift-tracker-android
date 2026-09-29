@@ -43,6 +43,23 @@ class DeliveryLocationService : Service() {
         private const val PREFS_NAME = "native_delivery_tracking"
         private const val PREF_DELIVERY_ID = "delivery_id"
         private const val WATCHDOG_INTERVAL_MILLIS = 15_000L
+        // Keystore and AtomicFile work must never share the WebView UI thread.
+        // One process-wide worker also orders service/fallback acknowledgements.
+        private val journalExecutor = GpsJournalWorker()
+        @Volatile private var recoveryQueueCount: Int? = null
+
+        private fun replaySamplesOnUiThread(samples: List<NativeLocationSample>, offer: (NativeLocationSample) -> Unit) {
+            val ui = Handler(Looper.getMainLooper())
+            var next = 0
+            val replay = object : Runnable {
+                override fun run() {
+                    val end = minOf(next + 16, samples.size)
+                    while (next < end) offer(samples[next++])
+                    if (next < samples.size) ui.postDelayed(this, 16L)
+                }
+            }
+            ui.post(replay)
+        }
 
         @Volatile
         private var running = false
@@ -84,13 +101,23 @@ class DeliveryLocationService : Service() {
             .put("lastWatchdogRecoveryAt", JSONObject.NULL)
 
         fun flushPendingSamples(context: android.content.Context) {
-            instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
-                MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+            val service = instance
+            if (service != null) service.flushPendingSamples() else journalExecutor.execute {
+                val samples = NativeSampleStore(context.applicationContext).pending()
+                recoveryQueueCount = samples.size
+                replaySamplesOnUiThread(samples) { sample ->
+                    MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+                }
             }
         }
 
         fun acknowledgePendingSample(context: android.content.Context, sampleId: String) {
-            instance?.acknowledge(sampleId) ?: NativeSampleStore(context.applicationContext).acknowledge(sampleId)
+            val service = instance
+            if (service != null) service.acknowledge(sampleId) else journalExecutor.execute {
+                val store = NativeSampleStore(context.applicationContext)
+                store.acknowledge(sampleId)
+                recoveryQueueCount = store.pendingCount()
+            }
         }
     }
 
@@ -190,7 +217,10 @@ class DeliveryLocationService : Service() {
             return
         }
         deliveryId = requestedDeliveryId
-        sampleStore.retainDelivery(requestedDeliveryId)
+        journalExecutor.execute {
+            sampleStore.retainDelivery(requestedDeliveryId)
+            recoveryQueueCount = sampleStore.pendingCount()
+        }
         sessionStartedAtEpochMs = System.currentTimeMillis()
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
@@ -410,7 +440,21 @@ class DeliveryLocationService : Service() {
         if (sample.sampleId in observedSampleIds) {
             return
         }
-        val acceptedSample = when (val result = sampleStore.append(sample)) {
+        val journalSessionStartedAt = sessionStartedAtEpochMs
+        journalExecutor.execute {
+            val result = sampleStore.append(sample)
+            recoveryQueueCount = sampleStore.pendingCount()
+            watchdogHandler.post {
+                if (journalSessionStartedAt == sessionStartedAtEpochMs && deliveryId == id) completeJournaledSample(sample, id, result)
+            }
+        }
+    }
+
+    private fun completeJournaledSample(sample: NativeLocationSample, id: String, result: NativeSampleStore.AppendResult) {
+        // Provider callbacks may have queued the same fix while its first
+        // journal write was running. Keep the existing idempotent dispatch.
+        if (sample.sampleId in observedSampleIds) return
+        val acceptedSample = when (result) {
             is NativeSampleStore.AppendResult.Appended -> {
                 recoveryStore = "appended"
                 result.sample
@@ -464,10 +508,19 @@ class DeliveryLocationService : Service() {
     }
 
     fun flushPendingSamples() {
-        sampleStore.pending().forEach { dispatchSample(it) }
+        journalExecutor.execute {
+            val samples = sampleStore.pending()
+            recoveryQueueCount = samples.size
+            replaySamplesOnUiThread(samples) { dispatchSample(it) }
+        }
     }
 
-    fun acknowledge(sampleId: String) = sampleStore.acknowledge(sampleId)
+    fun acknowledge(sampleId: String) {
+        journalExecutor.execute {
+            sampleStore.acknowledge(sampleId)
+            recoveryQueueCount = sampleStore.pendingCount()
+        }
+    }
 
     private fun stopTracking() {
         requestGeneration += 1
@@ -613,7 +666,7 @@ class DeliveryLocationService : Service() {
         .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
         .put("watchdogRecoveryCount", watchdogRecoveryCount)
         .put("lastWatchdogRecoveryAt", lastWatchdogRecoveryAt ?: JSONObject.NULL)
-        .put("recoveryQueueCount", sampleStore.pendingCount())
+        .put("recoveryQueueCount", recoveryQueueCount ?: JSONObject.NULL)
         .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
         .put("recoveryStore", recoveryStore)
         .put("nativeMessageDispatch", nativeMessageDispatch)
