@@ -20,6 +20,15 @@ object NativeTrackingPolicy {
     fun acceptsProviderTimestamp(sessionStartedAtEpochMs: Long, providerTimestampEpochMs: Long): Boolean =
         providerTimestampEpochMs > 0L && providerTimestampEpochMs >= sessionStartedAtEpochMs - 2_000L
 
+    // elapsedRealtime identity is reset by reboot. Never persist this clock;
+    // sticky process recovery establishes a fresh watchdog baseline.
+    fun acceptsProviderAge(nowElapsedNanos: Long, fixElapsedNanos: Long): Boolean =
+        fixElapsedNanos > 0 && nowElapsedNanos >= fixElapsedNanos &&
+            nowElapsedNanos - fixElapsedNanos <= 30_000_000_000L
+
+    fun canRestoreStickyDelivery(savedId: String, requestedId: String?, hasGeneration: Boolean): Boolean =
+        requestedId == savedId || !hasGeneration
+
     fun shouldRecoverStalledStream(
         nowEpochMs: Long,
         sessionStartedAtEpochMs: Long,

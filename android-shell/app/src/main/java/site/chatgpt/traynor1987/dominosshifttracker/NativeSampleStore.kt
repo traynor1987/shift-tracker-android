@@ -67,71 +67,80 @@ class NativeSampleStore(private val context: Context) {
         data class Failed(val reason: String) : AppendResult()
     }
 
-    private data class ReadResult(
-        val samples: List<NativeLocationSample>,
-        val failure: String? = null,
-    )
+    @Volatile private var journalReadCount = 0L
+    @Volatile private var journalWriteCount = 0L
+    @Volatile private var journalCapacityFailureCount = 0L
+    @Volatile private var journalLastAppendMs = 0.0
+    @Volatile private var journalLastAckMs = 0.0
+    @Volatile private var journalLastReadMs = 0.0
+    @Volatile private var journalLastWriteMs = 0.0
+
+    // Never takes the storage monitor: diagnostics cannot block the UI on disk.
+    fun diagnostics(): JSONObject = JSONObject()
+        .put("journalReadCount", journalReadCount)
+        .put("journalWriteCount", journalWriteCount)
+        .put("journalCapacityFailureCount", journalCapacityFailureCount)
+        .put("journalLastAppendMs", journalLastAppendMs)
+        .put("journalLastAckMs", journalLastAckMs)
+        .put("journalLastReadMs", journalLastReadMs)
+        .put("journalLastWriteMs", journalLastWriteMs)
+
+    private val snapshot = JournalSnapshot(MAX_SAMPLES, NativeLocationSample::sampleId, ::readSamples, ::write)
 
     @Synchronized
     fun append(sample: NativeLocationSample): AppendResult {
-        val readResult = readResult()
-        if (readResult.failure != null) return AppendResult.Failed(readResult.failure)
-        readResult.samples.firstOrNull { it.sampleId == sample.sampleId }?.let {
-            return AppendResult.AlreadyPresent(it)
+        val started = System.nanoTime()
+        val result = try { snapshot.append(sample) } finally { journalLastAppendMs = (System.nanoTime() - started) / 1_000_000.0 }
+        if (result.failure == "capacity_reached") journalCapacityFailureCount++
+        return when {
+            result.failure != null -> AppendResult.Failed(result.failure)
+            result.existing -> AppendResult.AlreadyPresent(requireNotNull(result.value))
+            else -> AppendResult.Appended(requireNotNull(result.value))
         }
-        val samples = readResult.samples.toMutableList()
-        samples.add(sample)
-        while (samples.size > MAX_SAMPLES) samples.removeAt(0)
-        return write(samples)?.let { AppendResult.Failed(it) } ?: AppendResult.Appended(sample)
     }
 
     @Synchronized
-    fun pending(): List<NativeLocationSample> = readResult().samples
+    fun pending(): List<NativeLocationSample> = runCatching { snapshot.pending() }.getOrDefault(emptyList())
 
     @Synchronized
-    fun pendingCount(): Int = readResult().samples.size
-
-    /** A new canonical delivery owns recovery from this point onward. Samples
-     * for older delivery IDs cannot be attached to it and are safely dropped. */
-    @Synchronized
-    fun retainDelivery(deliveryId: String) {
-        if (deliveryId.isBlank()) return
-        val readResult = readResult()
-        if (readResult.failure == null) write(readResult.samples.filter { it.deliveryId == deliveryId })
-    }
+    fun pendingCount(): Int = runCatching { snapshot.count() }.getOrDefault(0)
 
     @Synchronized
     fun acknowledge(sampleId: String) {
-        if (sampleId.isBlank()) return
-        val readResult = readResult()
-        if (readResult.failure == null) write(readResult.samples.filterNot { it.sampleId == sampleId })
+        val started = System.nanoTime()
+        try { if (sampleId.isNotBlank()) snapshot.remove(sampleId) }
+        finally { journalLastAckMs = (System.nanoTime() - started) / 1_000_000.0 }
     }
 
-    @Synchronized
-    fun clear() {
-        atomicFile().delete()
+    private fun readSamples(): List<NativeLocationSample> {
+        journalReadCount++
+        val started = System.nanoTime()
+        return try { readSnapshot() } finally { journalLastReadMs = (System.nanoTime() - started) / 1_000_000.0 }
     }
 
-    private fun readResult(): ReadResult {
+    private fun readSnapshot(): List<NativeLocationSample> {
         val file = atomicFile()
-        if (!file.baseFile.exists()) return ReadResult(emptyList())
-        return runCatching {
+        if (!file.baseFile.exists() && !File(context.filesDir, "$FILE_NAME.bak").exists()) return emptyList()
+        return run {
             val encoded = file.openRead().use { it.readBytes() }
             val packed = Base64.decode(encoded, Base64.NO_WRAP)
-            if (packed.size <= IV_BYTES) return@runCatching emptyList()
+            check(packed.size > IV_BYTES) { "Invalid encrypted journal" }
             val iv = packed.copyOfRange(0, IV_BYTES)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
             val json = JSONArray(String(cipher.doFinal(packed.copyOfRange(IV_BYTES, packed.size)), Charsets.UTF_8))
             buildList { for (index in 0 until json.length()) NativeLocationSample.fromJson(json.optJSONObject(index) ?: continue)?.let(::add) }
-        }.fold(
-            onSuccess = { ReadResult(it) },
-            onFailure = { ReadResult(emptyList(), failureCode("read", it)) },
-        )
+        }
     }
 
     /** Returns null on success or a bounded, non-sensitive diagnostic code. */
     private fun write(samples: List<NativeLocationSample>): String? {
+        journalWriteCount++
+        val started = System.nanoTime()
+        return try { writeSnapshot(samples) } finally { journalLastWriteMs = (System.nanoTime() - started) / 1_000_000.0 }
+    }
+
+    private fun writeSnapshot(samples: List<NativeLocationSample>): String? {
         val file = atomicFile()
         if (samples.isEmpty()) {
             return runCatching { file.delete() }.exceptionOrNull()?.let { failureCode("delete", it) }

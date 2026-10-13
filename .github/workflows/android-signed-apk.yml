@@ -86,6 +86,25 @@ jobs:
           SHIFT_TRACKER_KEY_PASSWORD: ${{ secrets.SHIFT_TRACKER_KEY_PASSWORD }}
         run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :wear:testDebugUnitTest :wear:lintDebug :app:assembleRelease :wear:assembleRelease
 
+      - name: Summarize exact executed native tests
+        if: always()
+        run: python3 scripts/summarize-native-tests.py
+
+      - name: Upload native JUnit reports and journal benchmark
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shift-tracker-native-test-reports
+          path: |
+            android-shell/app/build/test-results/**
+            android-shell/wear/build/test-results/**
+            android-shell/app/build/reports/tests/**
+            android-shell/wear/build/reports/tests/**
+            android-shell/app/build/reports/journal-benchmark.json
+            android-shell/build/reports/native-test-summary.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Verify portrait activity lock
         run: grep -F 'android:screenOrientation="portrait"' app/src/main/AndroidManifest.xml
 

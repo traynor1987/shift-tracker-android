@@ -51,6 +51,11 @@ class DeliveryLocationService : Service() {
         // One process-wide worker also orders service/fallback acknowledgements.
         private val journalExecutor = GpsJournalWorker()
         private val sessionGate = NativeSessionGate()
+        // Exactly one index owns the file within a process, including fallback
+        // bridge acknowledgements while the foreground service is absent.
+        private var sharedStore: NativeSampleStore? = null
+        @Synchronized private fun journalStore(context: Context): NativeSampleStore =
+            sharedStore ?: NativeSampleStore(context.applicationContext).also { sharedStore = it }
         private val requestedSession = NativeSessionGate()
 
         private var requestedSessionLoaded = false
@@ -81,18 +86,18 @@ class DeliveryLocationService : Service() {
         fun requestedGeneration() = requestedSession.generation
         @Volatile private var recoveryQueueCount: Int? = null
 
-        private fun replaySamplesOnUiThread(samples: List<NativeLocationSample>, offer: (NativeLocationSample) -> Unit) {
-            val ui = Handler(Looper.getMainLooper())
-            var next = 0
-            val replay = object : Runnable {
-                override fun run() {
-                    val end = minOf(next + 16, samples.size)
-                    while (next < end) offer(samples[next++])
-                    if (next < samples.size) ui.postDelayed(this, 16L)
-                }
-            }
-            ui.post(replay)
+        private val dispatchHandler = Handler(Looper.getMainLooper())
+        private val dispatchQueue = OrderedDispatchQueue { next -> dispatchHandler.postDelayed({ next() }, 16L) }
+
+        private fun beginReplayOnUiThread() {
+            if (Looper.myLooper() == Looper.getMainLooper()) dispatchQueue.beginReplay()
+            else dispatchHandler.post { dispatchQueue.beginReplay() }
         }
+
+        private fun replaySamplesOnUiThread(samples: List<NativeLocationSample>, offer: (NativeLocationSample) -> Unit) {
+            dispatchHandler.post { dispatchQueue.endReplay(samples.map { sample -> { offer(sample) } }) }
+        }
+
 
         @Volatile
         private var running = false
@@ -136,12 +141,15 @@ class DeliveryLocationService : Service() {
         fun flushPendingSamples(context: android.content.Context) {
             val service = instance
             val replayGeneration = sessionGate.generation
-            if (service != null) service.flushPendingSamples() else journalExecutor.execute {
-                val samples = NativeSampleStore(context.applicationContext).pending()
-                recoveryQueueCount = samples.size
-                replaySamplesOnUiThread(samples) { sample ->
-                    if (sessionGate.generation == replayGeneration) {
-                        MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+            if (service != null) service.flushPendingSamples() else {
+                beginReplayOnUiThread()
+                journalExecutor.execute {
+                    val samples = runCatching { journalStore(context).pending() }.getOrDefault(emptyList())
+                    recoveryQueueCount = samples.size
+                    replaySamplesOnUiThread(samples) { sample ->
+                        if (sessionGate.generation == replayGeneration) {
+                            MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+                        }
                     }
                 }
             }
@@ -150,7 +158,7 @@ class DeliveryLocationService : Service() {
         fun acknowledgePendingSample(context: android.content.Context, sampleId: String) {
             val service = instance
             if (service != null) service.acknowledge(sampleId) else journalExecutor.execute {
-                val store = NativeSampleStore(context.applicationContext)
+                val store = journalStore(context)
                 store.acknowledge(sampleId)
                 recoveryQueueCount = store.pendingCount()
             }
@@ -168,6 +176,7 @@ class DeliveryLocationService : Service() {
     private var sampleReceivedForSession = false
     private var initialFixCancellation: CancellationTokenSource? = null
     private val observedSampleIds = mutableSetOf<String>()
+    private val acceptedFixProgress = AcceptedFixProgress()
     private var locationUpdateRequest = "not_requested"
     private var providerAvailability = "unknown"
     private var lastKnownLocation = "not_checked"
@@ -181,6 +190,8 @@ class DeliveryLocationService : Service() {
     private var nativeMessageDispatch = "not_attempted"
     private var samplingMode = "not_started"
     private var sessionStartedAtEpochMs = 0L
+    private var sessionStartedAtElapsedMs = 0L
+    private var lastRecoveryElapsedMs: Long? = null
     private var lastSampleReceiptAt: Long? = null
     private var lastRealDistanceMetres: Float? = null
     private val watchdogHandler = Handler(Looper.getMainLooper())
@@ -216,7 +227,7 @@ class DeliveryLocationService : Service() {
         super.onCreate()
         instance = this
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        sampleStore = NativeSampleStore(this)
+        sampleStore = journalStore(this)
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         loadRequestedSession(this)
         createNotificationChannel()
@@ -244,7 +255,7 @@ class DeliveryLocationService : Service() {
             }
             null -> preferences.getString(PREF_DELIVERY_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { savedId ->
                 val requested = requestedSession.current
-                if (requested?.deliveryId == savedId || !preferences.contains(PREF_REQUEST_GENERATION)) {
+                if (NativeTrackingPolicy.canRestoreStickyDelivery(savedId, requested?.deliveryId, preferences.contains(PREF_REQUEST_GENERATION))) {
                     if (requested == null) requestSession(this, savedId)
                     startTracking(savedId)
                 }
@@ -284,13 +295,18 @@ class DeliveryLocationService : Service() {
         val token = sessionGate.begin(requestedDeliveryId)
         journalExecutor.execute {
             if (!sessionGate.isCurrent(token)) return@execute
-            sampleStore.retainDelivery(requestedDeliveryId)
+            // A new session fences callbacks, never erases older durable
+            // evidence. The canonical web path deliberately accepts/rejects
+            // each original delivery-tagged row and acknowledges its identity.
             recoveryQueueCount = sampleStore.pendingCount()
         }
         sessionStartedAtEpochMs = System.currentTimeMillis()
+        sessionStartedAtElapsedMs = SystemClock.elapsedRealtime()
+        lastRecoveryElapsedMs = null
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
         observedSampleIds.clear()
+        acceptedFixProgress.reset()
         locationUpdateRequest = "requesting"
         providerAvailability = "unknown"
         lastKnownLocation = "checking"
@@ -327,7 +343,9 @@ class DeliveryLocationService : Service() {
         val id = deliveryId ?: return
         if (!running) return
         val now = System.currentTimeMillis()
-        if (!NativeTrackingPolicy.shouldRecoverStalledStream(now, sessionStartedAtEpochMs, lastSampleReceiptAt, lastWatchdogRecoveryAt)) return
+        val elapsed = SystemClock.elapsedRealtime()
+        if (!NativeTrackingPolicy.shouldRecoverStalledStream(elapsed, sessionStartedAtElapsedMs, acceptedFixProgress.lastReceiptElapsedMs, lastRecoveryElapsedMs)) return
+        lastRecoveryElapsedMs = elapsed
         lastWatchdogRecoveryAt = now
         watchdogRecoveryCount += 1
         diagnostic = "GPS_STALLED_RECOVERING"
@@ -335,7 +353,7 @@ class DeliveryLocationService : Service() {
         // Use the established bridge status vocabulary so older hosted builds
         // can display recovery immediately; the diagnostics retain the exact
         // watchdog reason and recovery count.
-        emitState("waiting_for_fix", id, "GPS stalled: no native sample arrived for 60 seconds; restarting the same delivery location stream")
+        emitState("waiting_for_fix", id, "GPS stalled: no accepted native fix for 60 seconds; restarting the same delivery location stream")
         val generation = ++requestGeneration
         initialFixCancellation?.cancel()
         initialFixCancellation = null
@@ -498,6 +516,7 @@ class DeliveryLocationService : Service() {
         val rejection = when {
             location.time <= 0L -> "invalid_timestamp"
             !NativeTrackingPolicy.acceptsProviderTimestamp(sessionStartedAtEpochMs, location.time) -> "fix_predates_delivery_session"
+            !NativeTrackingPolicy.acceptsProviderAge(SystemClock.elapsedRealtimeNanos(), location.elapsedRealtimeNanos) -> "stale_provider_fix"
             !location.latitude.isFinite() || location.latitude !in -90.0..90.0 -> "invalid_latitude"
             !location.longitude.isFinite() || location.longitude !in -180.0..180.0 -> "invalid_longitude"
             !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f -> "accuracy_out_of_range"
@@ -526,17 +545,26 @@ class DeliveryLocationService : Service() {
             return
         }
         val journalToken = sessionGate.current ?: return
+        val receivedElapsedMs = SystemClock.elapsedRealtime()
         journalExecutor.execute {
             if (!sessionGate.isCurrent(journalToken)) return@execute
             val result = sampleStore.append(sample)
             recoveryQueueCount = sampleStore.pendingCount()
-            watchdogHandler.post {
-                if (sessionGate.isCurrent(journalToken) && running) completeJournaledSample(sample, id, result)
+            dispatchHandler.post {
+                // Journal acceptance renews liveness immediately. Bridge replay
+                // may be yielding for seconds and must not cause false stalls.
+                if (sessionGate.isCurrent(journalToken) && running &&
+                    result !is NativeSampleStore.AppendResult.Failed) {
+                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs)
+                }
+                dispatchQueue.offer(listOf({
+                    if (sessionGate.isCurrent(journalToken) && running) completeJournaledSample(sample, id, result, receivedElapsedMs)
+                }))
             }
         }
     }
 
-    private fun completeJournaledSample(sample: NativeLocationSample, id: String, result: NativeSampleStore.AppendResult) {
+    private fun completeJournaledSample(sample: NativeLocationSample, id: String, result: NativeSampleStore.AppendResult, receivedElapsedMs: Long) {
         // Provider callbacks may have queued the same fix while its first
         // journal write was running. Keep the existing idempotent dispatch.
         if (sample.sampleId in observedSampleIds) return
@@ -563,6 +591,7 @@ class DeliveryLocationService : Service() {
                 if (dispatchSample(sample)) {
                     recoveryStore = "append_failed_live_dispatched:${result.reason}"
                     observedSampleIds.add(sample.sampleId)
+                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs)
                     lastSampleRejection = null
                     val firstSample = !sampleReceivedForSession
                     sampleReceivedForSession = true
@@ -594,13 +623,15 @@ class DeliveryLocationService : Service() {
     }
 
     fun flushPendingSamples() {
-        val token = sessionGate.current
+        // Pause synchronously during the trusted hello/resume turn, before a
+        // queued live completion can drain against the newly connected bridge.
+        beginReplayOnUiThread()
         val replayGeneration = sessionGate.generation
         journalExecutor.execute {
-            val samples = sampleStore.pending()
+            val samples = runCatching { sampleStore.pending() }.getOrDefault(emptyList())
             recoveryQueueCount = samples.size
             replaySamplesOnUiThread(samples) {
-                if (sessionGate.generation == replayGeneration && (token == null || it.deliveryId == token.deliveryId)) dispatchSample(it)
+                if (sessionGate.generation == replayGeneration) dispatchSample(it)
             }
         }
     }
@@ -761,6 +792,10 @@ class DeliveryLocationService : Service() {
         .put("lastRawFixAccuracy", lastRawFixAccuracy?.toDouble() ?: JSONObject.NULL)
         .put("lastRawFixProvider", lastRawFixProvider ?: JSONObject.NULL)
         .put("lastSampleReceiptAt", lastSampleReceiptAt ?: JSONObject.NULL)
+        .put("lastAcceptedFixElapsedMs", acceptedFixProgress.lastReceiptElapsedMs ?: JSONObject.NULL)
+        .put("nativeRecoveryScope", "process_restart_only_no_boot_receiver")
+        .put("nativeDispatchBacklogCount", dispatchQueue.backlogCount)
+        .put("nativeReplayBarrierCount", dispatchQueue.replayBarrierCount)
         .put("samplingMode", samplingMode)
         .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
         .put("watchdogRecoveryCount", watchdogRecoveryCount)
@@ -769,6 +804,10 @@ class DeliveryLocationService : Service() {
         .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
         .put("recoveryStore", recoveryStore)
         .put("nativeMessageDispatch", nativeMessageDispatch)
+        .apply {
+            val journal = sampleStore.diagnostics()
+            journal.keys().forEach { key -> put(key, journal.get(key)) }
+        }
 
     private fun dispatchSample(sample: NativeLocationSample): Boolean {
         val dispatched = MainActivity.sendNativeMessage(sampleMessage(sample))

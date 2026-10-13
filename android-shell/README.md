@@ -197,3 +197,31 @@ state, falls back to the exact trusted production URL when no page was restored,
 resumes the WebView renderer with the Activity, and recreates only the WebView
 if Android reports that its renderer exited. App-level WebView storage remains
 intact, so PWA data, backup/restore and hosted refresh behavior are unchanged.
+
+### Native journal and provider recovery (2.2.72)
+
+The encrypted AtomicFile JSON format, Keystore alias and sample identity are unchanged.
+A process-wide committed snapshot index avoids decrypting/parsing the journal for every
+append, count and acknowledgement. Writes still serialize/encrypt the full snapshot;
+this is a bounded read-side improvement, not a claim of constant-time durable writes.
+The 20,000-row limit reports `capacity_reached` instead of evicting unacknowledged fixes.
+A failed write does not publish new in-memory state. Missing/duplicate acknowledgements
+are no-ops. Starting delivery B retains all unacknowledged delivery A rows; replay
+keeps each original delivery tag so the canonical web path can deliberately reject
+and acknowledge an older row without attaching it to B. There is no automatic
+session cleanup or journal clear operation. Reconnection barriers place queued recovery rows ahead of new live offers,
+with FIFO replay batches and session guards evaluated at dispatch.
+
+The watchdog uses monotonic receipt time of a unique safely journaled fix (or successful
+live fallback), independently of bridge replay backlog. Invalid, stale and duplicate
+provider callbacks do not renew it. Android sticky **process recreation** restores the
+persisted requested delivery; persisted cancellation/switch identity remains authoritative.
+This service has no boot receiver: automatic reboot resume and force-stop recovery are
+not claimed. Provider elapsed timestamps are validated against the current boot clock.
+
+The signed workflow runs the deterministic baseline/cached journal workload once with
+native unit tests, uploads its JSON timing/count report and all JUnit XML, and adds exact
+executed/skipped/failure/error counts to the job summary. The synthetic benchmark excludes
+Android Keystore, fsync, real GPS and device lifecycle timing; those need physical-device
+validation. Runtime diagnostics expose non-sensitive journal operation counts/durations,
+capacity failures, dispatch backlog and replay barriers.

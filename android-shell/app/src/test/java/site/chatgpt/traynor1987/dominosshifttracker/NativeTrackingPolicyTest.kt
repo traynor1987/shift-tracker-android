@@ -47,4 +47,28 @@ class NativeTrackingPolicyTest {
         assertFalse(NativeTrackingPolicy.shouldRecoverStalledStream(started + 119_999L, started, null, started + 60_000L))
         assertTrue(NativeTrackingPolicy.shouldRecoverStalledStream(started + 120_000L, started, null, started + 60_000L))
     }
+    @Test
+    fun repeatedRawInvalidOrDuplicateCallbacksDoNotRenewAcceptedFixWatchdog() {
+        val started = 10_000L
+        val accepted = started + 1_000L
+        // Raw receipt times change; accepted receipt remains the last usable fix.
+        repeat(100) { assertTrue(NativeTrackingPolicy.shouldRecoverStalledStream(started + 61_000L + it, started, accepted, null)) }
+        assertFalse(NativeTrackingPolicy.shouldRecoverStalledStream(started + 61_000L, started, started + 60_000L, null))
+    }
+
+    @Test
+    fun staleFutureAndPreviousBootElapsedFixesAreRejected() {
+        assertTrue(NativeTrackingPolicy.acceptsProviderAge(60_000_000_000L, 30_000_000_000L))
+        assertFalse(NativeTrackingPolicy.acceptsProviderAge(60_000_000_000L, 29_999_999_999L))
+        assertFalse(NativeTrackingPolicy.acceptsProviderAge(1_000_000L, 60_000_000_000L))
+        assertFalse(NativeTrackingPolicy.acceptsProviderAge(1_000_000L, 0))
+    }
+
+    @Test
+    fun stickyProcessRestoreRespectsPersistedCancelOrDeliverySwitch() {
+        assertTrue(NativeTrackingPolicy.canRestoreStickyDelivery("A", "A", true))
+        assertFalse(NativeTrackingPolicy.canRestoreStickyDelivery("A", null, true))
+        assertFalse(NativeTrackingPolicy.canRestoreStickyDelivery("A", "B", true))
+        assertTrue(NativeTrackingPolicy.canRestoreStickyDelivery("A", null, false))
+    }
 }
