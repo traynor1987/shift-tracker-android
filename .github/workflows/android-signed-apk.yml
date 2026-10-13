@@ -105,8 +105,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Verify portrait activity lock
-        run: grep -F 'android:screenOrientation="portrait"' app/src/main/AndroidManifest.xml
+      - name: Verify narrow portrait and fold configuration policy
+        run: python3 scripts/check-window-orientation.py
 
       - name: Verify APK signature and package
         run: |

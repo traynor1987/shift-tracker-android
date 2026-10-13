@@ -20,8 +20,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 30
         targetSdk = 35
-        versionCode = 77
-        versionName = "2.2.72"
+        versionCode = 78
+        versionName = "2.2.73"
     }
     signingConfigs {
         if (releaseSigningReady) create("shiftTrackerRelease") {
@@ -49,4 +49,8 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
     testImplementation(kotlin("test"))
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty("wearSourceDirectory", layout.projectDirectory.dir("src/main/java/site/chatgpt/traynor1987/dominosshifttracker/wear").asFile.absolutePath)
 }

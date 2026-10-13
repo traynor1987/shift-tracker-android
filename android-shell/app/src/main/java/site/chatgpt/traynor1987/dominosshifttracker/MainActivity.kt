@@ -5,6 +5,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.location.Location
 import android.net.Uri
@@ -141,6 +143,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyWindowOrientation(resources.configuration)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
@@ -158,6 +161,27 @@ class MainActivity : ComponentActivity() {
         // a permanent black surface until the task is force-closed.
         val restored = savedInstanceState?.let { webView.restoreState(it) != null } ?: false
         if (restored) armPageReadinessWatchdog(webView) else loadTracker()
+    }
+
+    private fun applyWindowOrientation(configuration: Configuration) {
+        val desired = when (NativeWindowOrientationPolicy.mode(
+            configuration.screenWidthDp, configuration.screenHeightDp, configuration.smallestScreenWidthDp,
+        )) {
+            NativeWindowOrientationPolicy.Mode.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            NativeWindowOrientationPolicy.Mode.FULL_SENSOR -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
+        if (requestedOrientation != desired) requestedOrientation = desired
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyWindowOrientation(newConfig)
+        // Preserve the canonical page, its exact-origin proxy and active input;
+        // a fold/rotation only changes the existing WebView viewport.
+        if (::webView.isInitialized) {
+            webView.requestLayout()
+            webView.invalidate()
+        }
     }
 
     override fun onResume() {

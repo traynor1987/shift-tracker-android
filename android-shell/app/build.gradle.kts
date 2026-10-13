@@ -33,8 +33,8 @@ android {
         targetSdk = 35
         // versionCode is the authoritative Android update comparator. Keep it
         // ahead of the public 2.2.66 / 71 production APK.
-        versionCode = 77
-        versionName = "2.2.72"
+        versionCode = 78
+        versionName = "2.2.73"
         manifestPlaceholders["appLabel"] = "Shift Tracker"
     }
 
@@ -90,6 +90,7 @@ dependencies {
 
 // A stable artifact location regardless of the test worker's working directory.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty("nativeManifestPath", layout.projectDirectory.file("src/main/AndroidManifest.xml").asFile.absolutePath)
     systemProperty("nativeSourceDirectory", layout.projectDirectory.dir("src/main/java/site/chatgpt/traynor1987/dominosshifttracker").asFile.absolutePath)
     systemProperty("journalBenchmarkOutput", layout.buildDirectory.file("reports/journal-benchmark.json").get().asFile.absolutePath)
 }

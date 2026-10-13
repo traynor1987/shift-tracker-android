@@ -57,6 +57,19 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
     private var activeScrollView: ScrollView? = null
     private val handler = Handler(Looper.getMainLooper())
     private val feedbackRefresh = Runnable { render() }
+    private val presentationRefresh = object : Runnable {
+        override fun run() {
+            if (dimmed || systemAmbient || screen != Screen.MAIN ||
+                !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+            val snapshot = WearState.read(this@WearMainActivity)
+            if (snapshot == null || snapshot.disconnected) { render(); return }
+            // Updating only this label preserves an in-progress hold/tap.
+            val feedback = WearState.readActionFeedback(this@WearMainActivity)?.takeIf { it.visible }
+            actionStatus.text = WearMainPresenter.status(snapshot.updatedAt, feedback?.outcome)
+            handler.postDelayed(this, WearMainPresenter.refreshDelay(snapshot.updatedAt))
+        }
+    }
+
     private val settingsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "records") handler.post {
             if (dimmed && !systemAmbient && (!WearPreferences.keepAwake(this) || !WearPreferences.batterySaverDisplay(this))) wakeDisplay()
@@ -915,6 +928,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             return
         }
         val snapshot = WearState.read(this)
+        handler.removeCallbacks(presentationRefresh)
+        handler.postDelayed(presentationRefresh, WearMainPresenter.refreshDelay(snapshot?.updatedAt ?: 0L))
         val feedback = WearState.readActionFeedback(this)?.takeIf { it.visible }
         val pending = feedback?.pending == true
         handler.removeCallbacks(feedbackRefresh)
@@ -924,7 +939,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         }
         actions.removeAllViews()
         contextDetail.text = ""
-        actionStatus.text = feedback?.let(::feedbackText).orEmpty()
+        actionStatus.text = WearMainPresenter.status(snapshot?.updatedAt ?: 0L, feedback?.outcome)
         actionStatus.setTextColor(if (feedback?.outcome in setOf("stale_state", "invalid_action", "error", "not_connected", "send_failed")) Color.rgb(239, 105, 90) else Color.rgb(105, 205, 180))
         feedback?.outcome?.takeIf { it != lastFeedbackOutcome && it !in setOf("sending", "queued") }?.let { outcome ->
             lastFeedbackOutcome = outcome
@@ -950,8 +965,8 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
             detail.text = WearDisplayPolicy.syncAgeLabel(snapshot?.updatedAt ?: 0L) +
                 if (snapshot?.active == true) "\nLast: ${WearDisplayPolicy.activityTitle(snapshot.activity).lowercase().replaceFirstChar { it.uppercase() }}" else ""
             contextDetail.text = "Move closer to your phone.\nIf nearby, open the phone app."
-            actionStatus.text = "Controls return after syncing"
-            actionStatus.setTextColor(Color.LTGRAY)
+            actionStatus.text = WearMainPresenter.status(snapshot?.updatedAt ?: 0L, feedback?.outcome)
+            if (feedback == null) actionStatus.setTextColor(Color.LTGRAY)
             actions.addView(TextView(this).apply {
                 text = "RETRY SYNC"; textSize = 11f; gravity = Gravity.CENTER
                 setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
@@ -1045,53 +1060,26 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         detail.text = listOf(selectedStat, activityDetail).filter { it.isNotBlank() }.joinToString("\n")
         contextDetail.text = if (snapshot.activity == "break") "${WearGoals.breakMinutes(this)} MIN TARGET · END MANUALLY" else WearDisplayPolicy.contextLine(snapshot, where)
 
-        val deliveredLabel = if (snapshot.requiredCustomers > 1) {
-            "DELIVERED ${(snapshot.deliveredCustomers + 1).coerceAtMost(snapshot.requiredCustomers)}/${snapshot.requiredCustomers}"
-        } else "DELIVERED"
-
-        val resumeChoice = "resume_task" in snapshot.actions || "dismiss_resume" in snapshot.actions
-        val availableActions = if (resumeChoice) listOf(
-            "resume_task" to "RESUME",
-            "dismiss_resume" to "LEAVE PAUSED",
-        ) else listOf(
-            "delivered" to deliveredLabel,
-            "back_at_store" to "BACK AT STORE",
-            "end_break" to "END BREAK",
-            "finish_quick_tasks" to "FINISH TASKS",
-            "complete_task" to "COMPLETE",
-            "single" to "SINGLE",
-            "double" to "DOUBLE",
-            "break" to "BREAK",
-        )
-        availableActions.filter { it.first in snapshot.actions }.forEach { (action, label) ->
-            actions.addView(actionButton(label, action, when {
-                action == "single" || action == "delivered" && snapshot.activity == "delivery_single" -> Color.rgb(239, 29, 69)
-                action == "double" || action == "delivered" -> Color.rgb(8, 117, 209)
-                action == "break" || action == "end_break" -> Color.rgb(224, 163, 56)
-                action == "finish_quick_tasks" -> Color.rgb(28, 157, 130)
-                action == "dismiss_resume" -> Color.rgb(76, 85, 96)
-                else -> Color.rgb(28, 157, 130)
-            }, pending))
+        WearMainPresenter.actions(snapshot.activity, snapshot.actions, snapshot.deliveredCustomers, snapshot.requiredCustomers).forEach { item ->
+            val colour = when (item.tone) {
+                WearMainPresenter.Tone.RED -> Color.rgb(239, 29, 69)
+                WearMainPresenter.Tone.BLUE -> Color.rgb(8, 117, 209)
+                WearMainPresenter.Tone.AMBER -> Color.rgb(224, 163, 56)
+                WearMainPresenter.Tone.MUTED -> Color.rgb(76, 85, 96)
+                WearMainPresenter.Tone.TEAL -> Color.rgb(28, 157, 130)
+            }
+            actions.addView(actionButton(item.label, item.action, colour, pending, item.primary))
         }
         actions.requestLayout()
     }
 
-    private fun feedbackText(feedback: WearActionFeedback): String = when (feedback.outcome) {
-        "sending" -> "SENDING TO PHONE…"
-        "queued" -> "PHONE PROCESSING…"
-        "applied", "already_applied" -> "✓ DONE"
-        "already_pending" -> "WAITING FOR PHONE…"
-        "stale_state" -> "STATE CHANGED — TRY AGAIN"
-        "invalid_action" -> "ACTION NO LONGER AVAILABLE"
-        "not_connected" -> "PHONE NOT CONNECTED"
-        "send_failed" -> "SEND FAILED — TRY AGAIN"
-        else -> "ACTION FAILED — TRY AGAIN"
-    }
+    private fun feedbackText(feedback: WearActionFeedback): String = WearMainPresenter.feedbackText(feedback.outcome)
 
-    private fun actionButton(label: String, action: String, colour: Int, pending: Boolean) = TextView(this).apply {
+    private fun actionButton(label: String, action: String, colour: Int, pending: Boolean, primary: Boolean = false) = TextView(this).apply {
         val hold = WearPreferences.holdActions(this@WearMainActivity) && action in setOf("delivered", "back_at_store")
         text = if (hold) "$label\nHold to confirm" else label
-        textSize = if (hold || label.length > 11) 9f else 10.5f
+        textSize = if (hold || label.length > 11) 9f else if (primary) 11.5f else 10.5f
+        contentDescription = if (primary) "$label, primary action" else label
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTypeface(typeface, Typeface.BOLD)
@@ -1104,7 +1092,7 @@ class WearMainActivity : androidx.activity.ComponentActivity(), DataClient.OnDat
         background = GradientDrawable().apply {
             cornerRadius = dp(30).toFloat()
             setColor(colour)
-            setStroke(dp(1), Color.argb(100, 255, 255, 255))
+            setStroke(dp(if (primary) 2 else 1), Color.argb(if (primary) 220 else 100, 255, 255, 255))
         }
         elevation = 0f
         fun submit() {
