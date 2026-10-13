@@ -37,15 +37,48 @@ class DeliveryLocationService : Service() {
     companion object {
         const val ACTION_START = "site.chatgpt.traynor1987.dominosshifttracker.START_LOCATION"
         const val ACTION_STOP = "site.chatgpt.traynor1987.dominosshifttracker.STOP_LOCATION"
+        const val ACTION_STOP_ALL = "site.chatgpt.traynor1987.dominosshifttracker.STOP_ALL_LOCATION"
+        const val EXTRA_REQUEST_GENERATION = "request_generation"
         const val EXTRA_DELIVERY_ID = "delivery_id"
         private const val NOTIFICATION_CHANNEL_ID = "shift_tracker_delivery_gps"
         private const val NOTIFICATION_ID = 2101
         private const val PREFS_NAME = "native_delivery_tracking"
         private const val PREF_DELIVERY_ID = "delivery_id"
+        private const val PREF_REQUESTED_ID = "requested_delivery_id"
+        private const val PREF_REQUEST_GENERATION = "request_generation"
         private const val WATCHDOG_INTERVAL_MILLIS = 15_000L
         // Keystore and AtomicFile work must never share the WebView UI thread.
         // One process-wide worker also orders service/fallback acknowledgements.
         private val journalExecutor = GpsJournalWorker()
+        private val sessionGate = NativeSessionGate()
+        private val requestedSession = NativeSessionGate()
+
+        private var requestedSessionLoaded = false
+
+        @Synchronized private fun loadRequestedSession(context: Context) {
+            if (requestedSessionLoaded) return
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            requestedSession.restore(prefs.getString(PREF_REQUESTED_ID, null), prefs.getLong(PREF_REQUEST_GENERATION, 0L))
+            requestedSessionLoaded = true
+        }
+        private fun saveRequestedSession(context: Context) {
+            // Small command identity only; provider samples remain encrypted on the journal worker.
+            check(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(PREF_REQUESTED_ID, requestedSession.current?.deliveryId)
+                .putLong(PREF_REQUEST_GENERATION, requestedSession.generation).commit()) {
+                "Native GPS command identity could not be saved"
+            }
+        }
+        @Synchronized fun requestSession(context: Context, id: String): NativeSessionGate.Token {
+            loadRequestedSession(context)
+            return requestedSession.begin(id).also { saveRequestedSession(context) }
+        }
+        fun isRequestedSession(token: NativeSessionGate.Token) = requestedSession.isCurrent(token)
+        @Synchronized fun cancelRequestedSession(context: Context, id: String?) {
+            loadRequestedSession(context)
+            if (if (id == null) requestedSession.stopAll() else requestedSession.stopTargeted(id)) saveRequestedSession(context)
+        }
+        fun requestedGeneration() = requestedSession.generation
         @Volatile private var recoveryQueueCount: Int? = null
 
         private fun replaySamplesOnUiThread(samples: List<NativeLocationSample>, offer: (NativeLocationSample) -> Unit) {
@@ -102,11 +135,14 @@ class DeliveryLocationService : Service() {
 
         fun flushPendingSamples(context: android.content.Context) {
             val service = instance
+            val replayGeneration = sessionGate.generation
             if (service != null) service.flushPendingSamples() else journalExecutor.execute {
                 val samples = NativeSampleStore(context.applicationContext).pending()
                 recoveryQueueCount = samples.size
                 replaySamplesOnUiThread(samples) { sample ->
-                    MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+                    if (sessionGate.generation == replayGeneration) {
+                        MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
+                    }
                 }
             }
         }
@@ -125,7 +161,10 @@ class DeliveryLocationService : Service() {
     private lateinit var sampleStore: NativeSampleStore
     private lateinit var preferences: SharedPreferences
     private var deliveryId: String? = null
+    private var activeCommandToken: NativeSessionGate.Token? = null
     private var requestGeneration = 0L
+    private var latestStartId = 0
+    private var locationCallback: LocationCallback? = null
     private var sampleReceivedForSession = false
     private var initialFixCancellation: CancellationTokenSource? = null
     private val observedSampleIds = mutableSetOf<String>()
@@ -154,18 +193,23 @@ class DeliveryLocationService : Service() {
         }
     }
 
-    private val locationCallback = object : LocationCallback() {
+    private fun callbackFor(generation: Long, token: NativeSessionGate.Token) = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
+            if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) return
             locationCallbackCount += 1
             result.locations.forEach { recordProviderLocation(it, "continuous") }
         }
 
         override fun onLocationAvailability(availability: LocationAvailability) {
-            val activeId = deliveryId ?: return
-            if (!running) return
+            if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) return
             providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
-            emitProviderState(activeId, "Location provider availability: $providerAvailability")
+            emitProviderState(token.deliveryId, "Location provider availability: $providerAvailability")
         }
+    }
+
+    private fun removeContinuousUpdates() {
+        locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
+        locationCallback = null
     }
 
     override fun onCreate() {
@@ -174,35 +218,54 @@ class DeliveryLocationService : Service() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         sampleStore = NativeSampleStore(this)
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        loadRequestedSession(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         when (intent?.action) {
-            ACTION_STOP -> stopTracking()
+            ACTION_STOP -> {
+                val target = intent.getStringExtra(EXTRA_DELIVERY_ID)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 128 }
+                if (target != null && intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L) == requestedSession.generation) stopTracking(target)
+            }
+            ACTION_STOP_ALL -> {
+                if (intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L) == requestedSession.generation) stopTracking()
+            }
             ACTION_START -> {
                 val requestedDeliveryId = intent.getStringExtra(EXTRA_DELIVERY_ID)?.trim()
                 if (requestedDeliveryId.isNullOrEmpty() || requestedDeliveryId.length > 128) {
                     emitState("service_not_started", null, "A valid delivery session was not supplied")
-                    stopSelf()
-                } else startTracking(requestedDeliveryId)
+                    stopSelfResult(latestStartId)
+                } else {
+                    val token = NativeSessionGate.Token(requestedDeliveryId, intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L))
+                    if (requestedSession.isCurrent(token)) startTracking(requestedDeliveryId, token)
+                }
             }
-            null -> preferences.getString(PREF_DELIVERY_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let(::startTracking)
+            null -> preferences.getString(PREF_DELIVERY_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { savedId ->
+                val requested = requestedSession.current
+                if (requested?.deliveryId == savedId || !preferences.contains(PREF_REQUEST_GENERATION)) {
+                    if (requested == null) requestSession(this, savedId)
+                    startTracking(savedId)
+                }
+            }
         }
         // If Android recreates the service after a process reclaim, restore
         // the active delivery id from the small native journal and continue.
         return START_STICKY
     }
 
-    private fun startTracking(requestedDeliveryId: String) {
-        if (running && deliveryId == requestedDeliveryId) {
+    private fun startTracking(requestedDeliveryId: String, commandToken: NativeSessionGate.Token? = requestedSession.current) {
+        if (running && deliveryId == requestedDeliveryId && activeCommandToken == commandToken) {
             flushPendingSamples()
             emitState(if (sampleReceivedForSession) "sample_received" else "waiting_for_fix", requestedDeliveryId, null)
             return
         }
-        if (deliveryId != null && deliveryId != requestedDeliveryId) {
+        if (deliveryId != null) {
             requestGeneration += 1
-            fusedLocationClient.removeLocationUpdates(locationCallback)
+            initialFixCancellation?.cancel()
+            initialFixCancellation = null
+            removeContinuousUpdates()
             running = false
             deliveryId = null
         }
@@ -217,7 +280,10 @@ class DeliveryLocationService : Service() {
             return
         }
         deliveryId = requestedDeliveryId
+        activeCommandToken = commandToken
+        val token = sessionGate.begin(requestedDeliveryId)
         journalExecutor.execute {
+            if (!sessionGate.isCurrent(token)) return@execute
             sampleStore.retainDelivery(requestedDeliveryId)
             recoveryQueueCount = sampleStore.pendingCount()
         }
@@ -273,7 +339,13 @@ class DeliveryLocationService : Service() {
         val generation = ++requestGeneration
         initialFixCancellation?.cancel()
         initialFixCancellation = null
-        fusedLocationClient.removeLocationUpdates(locationCallback).addOnCompleteListener {
+        val previousCallback = locationCallback
+        locationCallback = null
+        if (previousCallback == null) {
+            requestContinuousUpdates(generation, id, true)
+            return
+        }
+        fusedLocationClient.removeLocationUpdates(previousCallback).addOnCompleteListener {
             if (generation != requestGeneration || !running || deliveryId != id) return@addOnCompleteListener
             requestContinuousUpdates(generation, id, true)
         }
@@ -296,12 +368,19 @@ class DeliveryLocationService : Service() {
     }
 
     private fun requestContinuousUpdates(generation: Long, requestedDeliveryId: String, initial: Boolean) {
+        val token = sessionGate.current ?: return
+        if (token.deliveryId != requestedDeliveryId || generation != requestGeneration || !running) return
+        val callback = callbackFor(generation, token)
+        locationCallback = callback
         val request = buildLocationRequest(samplingMode == "near_store")
         locationUpdateRequest = "requesting_$samplingMode"
         runCatching {
-            fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+            fusedLocationClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
                 .addOnSuccessListener {
-                    if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnSuccessListener
+                    if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) {
+                        fusedLocationClient.removeLocationUpdates(callback)
+                        return@addOnSuccessListener
+                    }
                     locationUpdateRequest = "accepted_$samplingMode"
                     diagnostic = "WAITING_FOR_FIX"
                     emitState("waiting_for_fix", deliveryId, "Location-update request accepted in $samplingMode mode")
@@ -332,11 +411,17 @@ class DeliveryLocationService : Service() {
         val nextMode = if (NativeTrackingPolicy.samplingMode(location.latitude, location.longitude, currentPolicyMode) == NativeTrackingPolicy.SamplingMode.NEAR_STORE) "near_store" else "route"
         if (nextMode == samplingMode || !running || deliveryId != id) return
         samplingMode = nextMode
-        val generation = requestGeneration
+        val generation = ++requestGeneration
         // Do not race removal of the old request against registration of the
         // same callback under the new profile; a late removal could otherwise
         // cancel the replacement and strand a stationary return.
-        fusedLocationClient.removeLocationUpdates(locationCallback).addOnCompleteListener {
+        val previousCallback = locationCallback
+        locationCallback = null
+        if (previousCallback == null) {
+            requestContinuousUpdates(generation, id, false)
+            return
+        }
+        fusedLocationClient.removeLocationUpdates(previousCallback).addOnCompleteListener {
             if (generation == requestGeneration && running && deliveryId == id) requestContinuousUpdates(generation, id, false)
         }
     }
@@ -440,12 +525,13 @@ class DeliveryLocationService : Service() {
         if (sample.sampleId in observedSampleIds) {
             return
         }
-        val journalSessionStartedAt = sessionStartedAtEpochMs
+        val journalToken = sessionGate.current ?: return
         journalExecutor.execute {
+            if (!sessionGate.isCurrent(journalToken)) return@execute
             val result = sampleStore.append(sample)
             recoveryQueueCount = sampleStore.pendingCount()
             watchdogHandler.post {
-                if (journalSessionStartedAt == sessionStartedAtEpochMs && deliveryId == id) completeJournaledSample(sample, id, result)
+                if (sessionGate.isCurrent(journalToken) && running) completeJournaledSample(sample, id, result)
             }
         }
     }
@@ -508,10 +594,14 @@ class DeliveryLocationService : Service() {
     }
 
     fun flushPendingSamples() {
+        val token = sessionGate.current
+        val replayGeneration = sessionGate.generation
         journalExecutor.execute {
             val samples = sampleStore.pending()
             recoveryQueueCount = samples.size
-            replaySamplesOnUiThread(samples) { dispatchSample(it) }
+            replaySamplesOnUiThread(samples) {
+                if (sessionGate.generation == replayGeneration && (token == null || it.deliveryId == token.deliveryId)) dispatchSample(it)
+            }
         }
     }
 
@@ -522,44 +612,53 @@ class DeliveryLocationService : Service() {
         }
     }
 
-    private fun stopTracking() {
+    private fun stopTracking(requestedDeliveryId: String? = null) {
+        val target = requestedDeliveryId?.trim()?.takeIf { it.isNotEmpty() }
+        val activeId = deliveryId ?: preferences.getString(PREF_DELIVERY_ID, null)
+        if (target != null && target != activeId) return
+        sessionGate.stopAll()
         requestGeneration += 1
         watchdogHandler.removeCallbacks(watchdogCheck)
         initialFixCancellation?.cancel()
         initialFixCancellation = null
-        fusedLocationClient.removeLocationUpdates(locationCallback)
+        removeContinuousUpdates()
         running = false
         diagnostic = "STOPPED"
         emitState("stopped", deliveryId, null)
         deliveryId = null
+        activeCommandToken = null
         sessionStartedAtEpochMs = 0L
         samplingMode = "stopped"
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
         stopForegroundCompat()
-        stopSelf()
+        stopSelfResult(latestStartId)
     }
 
     private fun failTracking() {
+        sessionGate.stopAll()
         requestGeneration += 1
         watchdogHandler.removeCallbacks(watchdogCheck)
         initialFixCancellation?.cancel()
         initialFixCancellation = null
-        fusedLocationClient.removeLocationUpdates(locationCallback)
+        removeContinuousUpdates()
         running = false
         deliveryId = null
+        activeCommandToken = null
         sessionStartedAtEpochMs = 0L
         samplingMode = "failed"
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
         stopForegroundCompat()
-        stopSelf()
+        stopSelfResult(latestStartId)
     }
 
     override fun onDestroy() {
+        if (instance === this) sessionGate.stopAll()
+        requestGeneration += 1
         initialFixCancellation?.cancel()
         watchdogHandler.removeCallbacks(watchdogCheck)
-        fusedLocationClient.removeLocationUpdates(locationCallback)
+        removeContinuousUpdates()
         running = false
         if (instance === this) instance = null
         super.onDestroy()

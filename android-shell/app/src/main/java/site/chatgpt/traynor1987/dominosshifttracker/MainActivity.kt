@@ -75,7 +75,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var apkUpdateManager: AndroidApkUpdateManager
     private lateinit var wearUpdateManager: WearUpdateManager
     private val webReleaseExecutor = Executors.newSingleThreadExecutor()
-    private var pendingStartDeliveryId: String? = null
+    private var pendingStartToken: NativeSessionGate.Token? = null
+    private var pendingStartDeliveryId: String?
+        get() = pendingStartToken?.deliveryId
+        set(value) { pendingStartToken = value?.let { DeliveryLocationService.requestSession(this, it) } }
     private var backgroundSettingsRequested = false
     private var pendingBackgroundPermissionRequest = false
     private var pendingBackgroundDeliveryId: String? = null
@@ -435,6 +438,7 @@ class MainActivity : ComponentActivity() {
             }
             "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
+            "shift_tracker_location:stop_all" -> stopNativeLocation(null, stopAll = true)
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
             "shift_tracker_store_proof:request" -> requestStoreProofLocation(message.optString("requestId"))
             "shift_tracker_file:save" -> requestNativeFileSave(message)
@@ -720,7 +724,11 @@ class MainActivity : ComponentActivity() {
             sendNativeState("error", null, "A valid delivery session was not supplied")
             return
         }
-        pendingStartDeliveryId = deliveryId
+        if (runCatching { pendingStartDeliveryId = deliveryId }.isFailure) {
+            pendingStartToken = null
+            sendNativeState("service_not_started", deliveryId, "Native GPS command identity could not be saved; retry the delivery")
+            return
+        }
         if (!hasPreciseLocationPermission()) {
             requestPermissions(requiredRuntimePermissions().toTypedArray(), LOCATION_PERMISSION_REQUEST)
             sendNativeState("permission_required", deliveryId, "Allow Precise location first. Android asks for foreground location before any background-location option")
@@ -735,18 +743,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startNativeLocationService(deliveryId: String) {
+        val token = pendingStartToken ?: return
+        if (token.deliveryId != deliveryId || !DeliveryLocationService.isRequestedSession(token)) return
         pendingStartDeliveryId = null
         val intent = Intent(this, DeliveryLocationService::class.java)
             .setAction(DeliveryLocationService.ACTION_START)
             .putExtra(DeliveryLocationService.EXTRA_DELIVERY_ID, deliveryId)
+            .putExtra(DeliveryLocationService.EXTRA_REQUEST_GENERATION, token.generation)
         sendNativeState("service_starting", deliveryId, "Native delivery GPS start requested; waiting for the foreground service")
         runCatching { startForegroundService(this, intent) }
             .onFailure { sendNativeState("service_not_started", deliveryId, "Android rejected the delivery GPS service start") }
     }
 
-    private fun stopNativeLocation(@Suppress("UNUSED_PARAMETER") requestedDeliveryId: String?) {
-        pendingStartDeliveryId = null
-        val intent = Intent(this, DeliveryLocationService::class.java).setAction(DeliveryLocationService.ACTION_STOP)
+    private fun stopNativeLocation(requestedDeliveryId: String?, stopAll: Boolean = false) {
+        val target = requestedDeliveryId?.trim()?.takeIf { it.isNotEmpty() && it.length <= 128 }
+        if (!stopAll && target == null) return
+        if (runCatching { DeliveryLocationService.cancelRequestedSession(this, if (stopAll) null else target) }.isFailure) {
+            sendNativeState("error", target, "Native GPS stop command identity could not be saved; retry stopping GPS")
+            return
+        }
+        if (stopAll || pendingStartDeliveryId == target) pendingStartDeliveryId = null
+        val intent = Intent(this, DeliveryLocationService::class.java)
+            .setAction(if (stopAll) DeliveryLocationService.ACTION_STOP_ALL else DeliveryLocationService.ACTION_STOP)
+            .putExtra(DeliveryLocationService.EXTRA_DELIVERY_ID, target)
+            .putExtra(DeliveryLocationService.EXTRA_REQUEST_GENERATION, DeliveryLocationService.requestedGeneration())
         // Always enqueue the stop command, even if the start request has not
         // completed its asynchronous provider callback yet. Android orders
         // service commands, so a fast Back at Store cannot leave a late start
@@ -925,6 +945,7 @@ class MainActivity : ComponentActivity() {
     }.getOrDefault(false)
 
     private fun nativeDiagnostics(): JSONObject = JSONObject()
+        .put("sessionScopedCommands", true)
         .put("diagnostic", currentDiagnosticCode())
         .put("foregroundLocation", when {
             hasPreciseLocationPermission() -> "precise"
@@ -964,7 +985,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun continuePendingNativeStart() {
-        val deliveryId = pendingStartDeliveryId ?: return
+        val token = pendingStartToken ?: return
+        if (!DeliveryLocationService.isRequestedSession(token)) { pendingStartToken = null; return }
+        val deliveryId = token.deliveryId
         if (!hasPreciseLocationPermission()) {
             pendingStartDeliveryId = null
             sendNativeState("permission_required", deliveryId, "Precise location is required for native delivery GPS")
