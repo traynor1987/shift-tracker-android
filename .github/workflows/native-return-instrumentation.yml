@@ -1,9 +1,7 @@
 name: Native return Android instrumentation
 on:
   workflow_dispatch:
-  push:
-    branches: ['feat/shift-monitor-native-return-2026-10-22']
-    paths: ['android-shell/**', '.github/workflows/native-return-instrumentation.yml']
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -17,6 +15,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
