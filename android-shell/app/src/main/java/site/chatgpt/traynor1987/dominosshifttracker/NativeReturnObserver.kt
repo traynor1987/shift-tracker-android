@@ -43,6 +43,7 @@ class NativeReturnObserver(private val context: Context) {
         if (sample.timestampEpochMs < snapshot.activityStartedAt) return null
         val distance = NativeTrackingPolicy.distanceMetres(sample.latitude, sample.longitude,
             NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE)
+        if (policy.confirmedAt > 0 && snapshot.latestDeliveredAt > policy.confirmedAt) policy.confirmedAt = 0
         val changed = policy.observe(sample.timestampEpochMs, distance, sample.accuracy.toDouble())
         val next = JSONObject().put("identity", key).put("shiftId", snapshot.shiftId)
             .put("deliveryId", sample.deliveryId).put("generation", generation)

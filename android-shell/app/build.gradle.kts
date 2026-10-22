@@ -30,6 +30,7 @@ android {
         // avoiding any need to uninstall it before data transfer is verified.
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 35
         // versionCode is the authoritative Android update comparator. Keep it
         // ahead of the public 2.2.66 / 71 production APK.
@@ -86,6 +87,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-wearable:18.2.0")
     testImplementation(kotlin("test"))
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 // A stable artifact location regardless of the test worker's working directory.

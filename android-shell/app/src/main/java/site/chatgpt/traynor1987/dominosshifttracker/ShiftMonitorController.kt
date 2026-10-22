@@ -14,7 +14,7 @@ object ShiftMonitorController {
     fun highAccuracy(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("highAccuracy", false)
     fun sync(context: Context, snapshot: ShiftSnapshot) {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        check(p.edit().putString("shiftId", if (snapshot.shiftActive && snapshot.settings.alwaysOnShiftMonitoring) snapshot.shiftId else null)
+        check(p.edit().putString("shiftId", if (ShiftMonitoringPolicy.mode(snapshot.settings.alwaysOnShiftMonitoring, snapshot.shiftActive, false, snapshot.settings.shiftMonitoringHighAccuracy) != "stopped") snapshot.shiftId else null)
             .putBoolean("highAccuracy", snapshot.settings.shiftMonitoringHighAccuracy).commit())
     }
     fun stop(context: Context) {

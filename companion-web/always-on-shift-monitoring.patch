@@ -1,0 +1,154 @@
+diff --git a/components/ShiftTrackerApp.tsx b/components/ShiftTrackerApp.tsx
+index e4d4957..56f3f1a 100644
+--- a/components/ShiftTrackerApp.tsx
++++ b/components/ShiftTrackerApp.tsx
+@@ -3209,6 +3209,7 @@ export default function ShiftTrackerApp() {
+           carryoutState.observedOutside = true;
+         } else if (
+           carryoutState.observedOutside &&
++          settings.alwaysOnShiftMonitoring !== true &&
+           !carryoutState.autoReturning &&
+           deliveryCustomersComplete(deliveryActivity)
+         ) {
+@@ -4940,6 +4941,8 @@ export default function ShiftTrackerApp() {
+     carryoutAutoReturn?: { entryAt: string },
+     commitAction: AppDataCommit = commit,
+   ) {
++    // The opt-in native monitoring mode always preserves the owner's manual tap.
++    if ((autoReturnRecovery || carryoutAutoReturn) && lastCommittedDataRef.current.settings.alwaysOnShiftMonitoring === true) return;
+     if (!active) return;
+     const running = (active.activities ?? []).findLast(
+       (item) =>
+@@ -5081,6 +5084,7 @@ export default function ShiftTrackerApp() {
+       !running ||
+       !deliveryCustomersComplete(running) ||
+       !confirmedStoreReturnAt(running) ||
++      data.settings.alwaysOnShiftMonitoring === true ||
+       !entryAt ||
+       !lastDeliveredAt ||
+       Date.parse(entryAt) < Date.parse(lastDeliveredAt)
+@@ -5115,6 +5119,7 @@ export default function ShiftTrackerApp() {
+     active,
+     data.shifts,
+     data.settings.operationalAllowances?.returnResetMinutes,
++    data.settings.alwaysOnShiftMonitoring,
+     finishDelivery,
+     storeProofFix,
+   ]);
+@@ -7499,7 +7504,8 @@ export default function ShiftTrackerApp() {
+       if (
+         info.trackingActive &&
+         info.trackedDeliveryId &&
+-        info.trackedDeliveryId !== currentDeliveryId
++        info.trackedDeliveryId !== currentDeliveryId &&
++        !info.trackedDeliveryId.startsWith("monitor:")
+       ) {
+         appendDeveloperLog(
+           "ANDROID",
+@@ -7567,6 +7573,7 @@ export default function ShiftTrackerApp() {
+             }
+           : current,
+       );
++      if (state.deliveryId?.startsWith("monitor:")) return;
+       if (
+         state.deliveryId &&
+         currentDeliveryId &&
+@@ -8065,6 +8072,8 @@ export default function ShiftTrackerApp() {
+         Number.isFinite(delivery.earlyDispatchGapSeconds)
+           ? Math.max(0, Math.round(delivery.earlyDispatchGapSeconds ?? 0))
+           : 0,
++      storeExitObserved: delivery?.storeExitObserved === true,
++      latestDeliveredAtEpochMs: Math.max(0, ...(delivery?.customerEvents ?? []).filter(event => event.source === "manual_delivered").map(event => Date.parse(event.timestamp)).filter(Number.isFinite)),
+       storeExitAtEpochMs: Number.isFinite(storeExitAtEpochMs)
+         ? storeExitAtEpochMs
+         : 0,
+@@ -8088,6 +8097,8 @@ export default function ShiftTrackerApp() {
+         : "unknown",
+       allowedActions,
+       settings: {
++        alwaysOnShiftMonitoring: data.settings.alwaysOnShiftMonitoring === true,
++        shiftMonitoringHighAccuracy: data.settings.shiftMonitoringHighAccuracy === true,
+         liveNotification: data.settings.androidLiveShiftNotification !== false,
+         notificationActions: data.settings.androidNotificationActions !== false,
+         shiftReminders: data.settings.androidShiftReminders === true,
+@@ -8101,6 +8112,8 @@ export default function ShiftTrackerApp() {
+     });
+   }, [
+     active,
++    data.settings.alwaysOnShiftMonitoring,
++    data.settings.shiftMonitoringHighAccuracy,
+     data.settings.androidBreakReminders,
+     data.settings.androidLiveShiftNotification,
+     data.settings.androidNotificationActions,
+@@ -23271,7 +23284,14 @@ function SettingsPage({
+         <section className="panel native-location-permission">
+           <div>
+             <p className="eyebrow">ANDROID APK</p>
+-            <h2>Background delivery GPS</h2>
++            <h2>Always-On Shift Monitoring</h2>
++            <p>Requires Android 2.2.74 or later. Off by default.</p>
++            <label><input type="checkbox" checked={settings.alwaysOnShiftMonitoring === true} onChange={event => update("alwaysOnShiftMonitoring", event.target.checked)} /> Monitor throughout a clocked-in shift</label>
++            <label>Battery mode <select value={settings.shiftMonitoringHighAccuracy ? "high" : "adaptive"} onChange={event => update("shiftMonitoringHighAccuracy", event.target.value === "high")}><option value="adaptive">Adaptive (default)</option><option value="high">High Accuracy</option></select></label>
++            <p>Starts when you clock in with the app open and stops at Clock Out. At-store fixes are not saved as a route. Deliveries retain their existing evidence.</p>
++            <p>Status: {nativeShellInfo.diagnostics?.foregroundLocation !== "precise" ? "Permission Required" : nativeShellInfo.diagnostics?.serviceRunning ? (nativeShellInfo.diagnostics?.lastSampleReceivedAt && Date.now() - nativeShellInfo.diagnostics.lastSampleReceivedAt < 90_000 ? "Active" : "Delayed") : "Stopped"} · Mode: {nativeShellInfo.diagnostics?.samplingMode ?? "not started"}</p>
++            <p>Last accepted location: {nativeShellInfo.diagnostics?.lastSampleReceivedAt ? `${Math.max(0, Math.round((Date.now() - nativeShellInfo.diagnostics.lastSampleReceivedAt) / 1000))} seconds ago` : "none"}. Native return observation: {nativeShellInfo.diagnostics?.nativeReturnObservedAt ? new Date(nativeShellInfo.diagnostics.nativeReturnObservedAt).toLocaleTimeString() : "none"}.</p>
++            <p>Keep Precise location and notifications enabled. Samsung battery restrictions may delay tracking. Force-stop, revoked permissions and reboot require reopening the app; monitoring is not guaranteed through these events.</p>
+             <small>
+               {nativeShellInfo.diagnostics?.backgroundLocationGranted
+                 ? "Allow all the time is enabled"
+@@ -23287,7 +23307,7 @@ function SettingsPage({
+           )}
+           <p>
+             {nativeShellInfo.diagnostics?.backgroundLocationGranted
+-              ? "Single or Double starts tracking; Delivered keeps it running; Back at Store or Cancel stops it. No active delivery means no GPS collection."
++              ? "Delivery GPS stays active through Delivered. With Always-On enabled, Back at Store returns to adaptive monitoring until Clock Out."
+               : "Android grants foreground location first. On Samsung, choose Permissions → Location → Allow all the time, keep Precise location on, then return to Shift Tracker."}
+           </p>
+         </section>
+diff --git a/lib/domain.ts b/lib/domain.ts
+index 731b07a..45eebb3 100644
+--- a/lib/domain.ts
++++ b/lib/domain.ts
+@@ -693,6 +693,8 @@ export interface Settings {
+   firstTaskPromptIncludeRushReady?: boolean;
+   /** Android companion features mirror web state; the web database remains authoritative. */
+   automaticDispatchTimer?: boolean;
++  alwaysOnShiftMonitoring?: boolean;
++  shiftMonitoringHighAccuracy?: boolean;
+   androidLiveShiftNotification?: boolean;
+   androidNotificationActions?: boolean;
+   androidShiftReminders?: boolean;
+diff --git a/lib/nativeBridge.ts b/lib/nativeBridge.ts
+index 5624469..d909ea9 100644
+--- a/lib/nativeBridge.ts
++++ b/lib/nativeBridge.ts
+@@ -23,6 +23,12 @@ export type NativeDiagnostics = {
+   backgroundLocationGranted?: boolean;
+   notificationsGranted?: boolean;
+   locationProviderEnabled?: boolean;
++  shiftMonitoringEnabled?: boolean;
++  samplingMode?: string;
++  nativeReturnObservedAt?: number;
++  nativeReturnConfirmedAt?: number;
++  nativeReturnPersistedAt?: number;
++  nativeReturnNotificationAt?: number;
+   serviceRunning?: boolean;
+   lastSampleReceivedAt?: number | null;
+   backgroundPermissionLabel?: string;
+@@ -116,13 +122,15 @@ export type NativeShiftSnapshot = {
+   requiredCustomers?: number;
+   earlyDispatchGapSeconds?: number;
+   storeExitAtEpochMs?: number;
++  storeExitObserved?: boolean;
++  latestDeliveredAtEpochMs?: number;
+   storeEntryAtEpochMs?: number;
+   /** Store work paused by the current delivery and eligible to resume later. */
+   pausedTaskName?: string;
+   // Display-only mirror for native companions. It never controls geofence logic.
+   storeStatus?: "at_store" | "outside_store" | "detecting" | "unknown";
+   allowedActions: Array<"delivered" | "back_at_store" | "end_break" | "complete_task" | "single" | "double" | "break" | "undo_delivered" | "cancel_delivery" | "resume_task" | "dismiss_resume" | "start_quick_task" | "finish_quick_tasks">;
+-  settings: { liveNotification: boolean; notificationActions: boolean; shiftReminders: boolean; breakReminders: boolean; taskReminders: boolean; photoCompression: "automatic" | "original" };
++  settings: { alwaysOnShiftMonitoring?: boolean; shiftMonitoringHighAccuracy?: boolean; liveNotification: boolean; notificationActions: boolean; shiftReminders: boolean; breakReminders: boolean; taskReminders: boolean; photoCompression: "automatic" | "original" };
+ };
+ 
+ export type NativeActionRequest = {

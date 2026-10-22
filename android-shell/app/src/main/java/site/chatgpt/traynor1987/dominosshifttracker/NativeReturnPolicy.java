@@ -27,8 +27,8 @@ public final class NativeReturnPolicy {
   }
   if(candidate.equals("inside") && exitAt>0 && transitionAt-exitAt<60000){presence="outside";return false;}
   if(candidate.equals("inside") && distance<=35 && exitAt>0 && confirmedAt==0) {
-   firstInsideAt=transitionAt;confirmedAt=at;
-   exactEntryAt=previous.equals("outside")&&observed?transitionAt:0;
+   if(firstInsideAt==0) firstInsideAt=transitionAt;confirmedAt=at;
+   if(previous.equals("outside")) exactEntryAt=observed?transitionAt:0;
    return true;
   }
   return false;

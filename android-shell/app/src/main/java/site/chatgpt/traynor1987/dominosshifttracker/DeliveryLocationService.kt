@@ -78,6 +78,7 @@ class DeliveryLocationService : Service() {
             loadRequestedSession(context)
             return requestedSession.begin(id).also { saveRequestedSession(context) }
         }
+        @Synchronized fun isRequestedSession(context: Context, token: NativeSessionGate.Token): Boolean { loadRequestedSession(context); return requestedSession.isCurrent(token) }
         fun isRequestedSession(token: NativeSessionGate.Token) = requestedSession.isCurrent(token)
         @Synchronized fun cancelRequestedSession(context: Context, id: String?) {
             loadRequestedSession(context)
@@ -91,6 +92,7 @@ class DeliveryLocationService : Service() {
         private val dispatchQueue = OrderedDispatchQueue { next -> dispatchHandler.postDelayed({ next() }, 16L) }
 
         private fun beginReplayOnUiThread() {
+            recoveryQueueCount = null
             if (Looper.myLooper() == Looper.getMainLooper()) dispatchQueue.beginReplay()
             else dispatchHandler.post { dispatchQueue.beginReplay() }
         }
@@ -113,6 +115,8 @@ class DeliveryLocationService : Service() {
         private var instance: DeliveryLocationService? = null
 
         fun isRunning() = running
+        fun replayIsDurablyDrained() = recoveryQueueCount == 0 && dispatchQueue.backlogCount == 0 && dispatchQueue.replayBarrierCount == 0
+        fun refreshReturnNotification() { instance?.let { if (it.running && it.nativeReturned) runCatching { it.startForegroundCompat() } } }
 
         fun diagnosticCode() = diagnostic
 
@@ -162,6 +166,7 @@ class DeliveryLocationService : Service() {
                 val store = journalStore(context)
                 store.acknowledge(sampleId)
                 recoveryQueueCount = store.pendingCount()
+                dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
             }
         }
     }
@@ -170,6 +175,7 @@ class DeliveryLocationService : Service() {
     private lateinit var sampleStore: NativeSampleStore
     private lateinit var returnObserver: NativeReturnObserver
     private var nativeReturned = false
+    private var lastNotifiedConfirmation = 0L
     private fun idleMonitoring() = deliveryId?.startsWith("monitor:") == true
     private lateinit var preferences: SharedPreferences
     private var deliveryId: String? = null
@@ -545,6 +551,7 @@ class DeliveryLocationService : Service() {
             acceptedFixProgress.accepted("$id:${location.time}", SystemClock.elapsedRealtime())
             lastSampleReceivedAt = location.time
             diagnostic = "SAMPLE_RECEIVED"
+            emitState("sample_received", id, "Shift monitoring fix accepted; no route retained")
             return
         }
         updateSamplingModeFor(location, id)
@@ -580,7 +587,8 @@ class DeliveryLocationService : Service() {
             if (observation != null) dispatchHandler.post {
                 if (sessionGate.isCurrent(journalToken) && running) {
                     val detected = observation.optLong("confirmedAt") > 0
-                    if (nativeReturned != detected) {
+                    if (nativeReturned != detected || (detected && observation.optLong("nativeConfirmedAt") != lastNotifiedConfirmation)) {
+                        lastNotifiedConfirmation = observation.optLong("nativeConfirmedAt")
                         nativeReturned = detected
                         runCatching { startForegroundCompat() }
                     }
@@ -676,6 +684,7 @@ class DeliveryLocationService : Service() {
         journalExecutor.execute {
             sampleStore.acknowledge(sampleId)
             recoveryQueueCount = sampleStore.pendingCount()
+            dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
         }
     }
 
@@ -752,7 +761,7 @@ class DeliveryLocationService : Service() {
 
     private fun startForegroundCompat() {
         val mirror = NativeShiftState.read(this)
-        val canQueueReturn = nativeReturned && mirror?.activityId == deliveryId && mirror.requiredCustomers > 0 && mirror.deliveredCustomers >= mirror.requiredCustomers && mirror.latestDeliveredAt > 0 && NativeReturnObserver.confirmedSampleAt(this) >= mirror.latestDeliveredAt
+        val canQueueReturn = nativeReturned && mirror != null && mirror.activityId == deliveryId && mirror.requiredCustomers > 0 && mirror.deliveredCustomers >= mirror.requiredCustomers && mirror.latestDeliveredAt > 0 && NativeReturnObserver.confirmedSampleAt(this) >= mirror.latestDeliveredAt
         val returnIntent = Intent(this, MainActivity::class.java)
             .setAction("native_return:${deliveryId}:${activeCommandToken?.generation}")
             .putExtra("native_return_delivery", deliveryId)

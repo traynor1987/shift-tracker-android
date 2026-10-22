@@ -69,6 +69,8 @@ class MainActivity : ComponentActivity() {
         private var activeActivity: MainActivity? = null
 
         /** Only the currently visible, exact-origin activity can receive data. */
+        fun nativeEvidenceDrained() { activeActivity?.deliverPendingNativeAction() }
+
         fun sendNativeMessage(payload: String): Boolean = activeActivity?.postNativeMessageOnUiThread(payload) ?: false
     }
 
@@ -185,9 +187,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private var monitoringActivityResumed = false
+    private var returnReconciliationReady = false
 
     override fun onResume() {
         monitoringActivityResumed = true
+        returnReconciliationReady = false
         super.onResume()
         activeActivity = this
         if (::webView.isInitialized) {
@@ -486,6 +490,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 if (snapshot?.shiftActive == true && snapshot.settings.liveNotification && !hasNotificationPermission() && Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), SHIFT_NOTIFICATION_PERMISSION_REQUEST)
+                returnReconciliationReady = snapshot != null
+                DeliveryLocationService.refreshReturnNotification()
                 deliverPendingNativeAction()
                 postNativeMessage(JSONObject().put("type", "shift_tracker_state:sync_result").put("accepted", snapshot != null).toString())
             }
@@ -583,7 +589,7 @@ class MainActivity : ComponentActivity() {
     private fun queueActionFromIntent(intent: Intent?) {
         intent?.getStringExtra("native_return_delivery")?.let { id ->
             val token = NativeSessionGate.Token(id, intent.getLongExtra("native_return_generation", -1L))
-            if (DeliveryLocationService.isRequestedSession(token)) NativeShiftState.queueObservedReturn(this,
+            if (DeliveryLocationService.isRequestedSession(this, token)) NativeShiftState.queueObservedReturn(this,
                 intent.getStringExtra("native_return_shift") ?: "", id)
             intent.removeExtra("native_return_delivery")
         }
@@ -595,6 +601,7 @@ class MainActivity : ComponentActivity() {
     private fun deliverPendingNativeAction() {
         val pending = NativeShiftState.peekPendingAction(this) ?: return
         if (pending.optString("id").startsWith("native-return-")) {
+            if (!returnReconciliationReady || !DeliveryLocationService.replayIsDurablyDrained()) return
             val canonical = NativeShiftState.read(this) ?: return
             // Reconciliation emits a fresh canonical snapshot only after GPS ingestion.
             // Retain the queued tap until existing customer/return/proof rules permit it.
