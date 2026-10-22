@@ -116,7 +116,7 @@ class DeliveryLocationService : Service() {
 
         fun isRunning() = running
         fun replayIsDurablyDrained() = recoveryQueueCount == 0 && dispatchQueue.backlogCount == 0 && dispatchQueue.replayBarrierCount == 0
-        fun refreshReturnNotification() { instance?.let { if (it.running && it.nativeReturned) runCatching { it.startForegroundCompat() } } }
+        fun refreshReturnNotification() { instance?.let { if (running && it.nativeReturned) runCatching { it.startForegroundCompat() } } }
 
         fun diagnosticCode() = diagnostic
 

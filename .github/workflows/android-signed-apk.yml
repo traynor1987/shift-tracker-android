@@ -219,6 +219,7 @@ jobs:
           WEAR_VERSION_CODE: ${{ needs.build-signed-apk.outputs.wear_version_code }}
         run: |
           set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/${GITHUB_REF_NAME}" --jq '.object.sha')" = "$GITHUB_SHA"
           METADATA_URL=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "shift-tracker-android-release.json") | .browser_download_url' | head -n1 || true)
           if [ -n "$METADATA_URL" ]; then
             PREVIOUS_CODE=$(curl --fail --silent --show-error --location "$METADATA_URL" | jq -r '.versionCode')
@@ -262,6 +263,7 @@ jobs:
           WEAR_VERSION_CODE: ${{ needs.build-signed-apk.outputs.wear_version_code }}
         run: |
           set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/${GITHUB_REF_NAME}" --jq '.object.sha')" = "$GITHUB_SHA"
           METADATA_URL=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name == "shift-tracker-android-release.json") | .browser_download_url' | head -n1)
           test -n "$METADATA_URL"
           curl --fail --silent --show-error --location "$METADATA_URL" > previous.json

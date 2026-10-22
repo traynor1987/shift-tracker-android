@@ -483,7 +483,7 @@ class MainActivity : ComponentActivity() {
                     if (!monitorSaved) return
                     val idleId = ShiftMonitorController.idleId(this)
                     if (monitoringActivityResumed && idleId != null && snapshot.activity !in setOf("delivery_single", "delivery_double") &&
-                        (DeliveryLocationService.activeDeliveryId(this) != idleId || previousHighAccuracy != snapshot.settings.shiftMonitoringHighAccuracy)) requestNativeLocationStart(idleId)
+                        (DeliveryLocationService.activeDeliveryId(this) != idleId || previousHighAccuracy != snapshot.settings.shiftMonitoringHighAccuracy || (!DeliveryLocationService.isRunning() && pendingStartDeliveryId != idleId))) requestNativeLocationStart(idleId)
                     if (idleId == null) {
                         pendingStartDeliveryId?.takeIf { it.startsWith("monitor:") }?.let { stopNativeLocation(it) }
                         DeliveryLocationService.activeDeliveryId(this)?.takeIf { it.startsWith("monitor:") }?.let { stopNativeLocation(it) }
