@@ -474,21 +474,26 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_state:sync" -> {
                 val snapshot = NativeShiftState.replace(this, message)
                 if (snapshot != null) {
-                    runCatching { ShiftMonitorController.sync(this, snapshot) }
+                    val previousHighAccuracy = ShiftMonitorController.highAccuracy(this)
+                    val monitorSaved = runCatching { ShiftMonitorController.sync(this, snapshot) }.isSuccess
+                    if (!monitorSaved) return
                     val idleId = ShiftMonitorController.idleId(this)
                     if (monitoringActivityResumed && idleId != null && snapshot.activity !in setOf("delivery_single", "delivery_double") &&
-                        DeliveryLocationService.activeDeliveryId(this) != idleId) requestNativeLocationStart(idleId)
-                    if (idleId == null && DeliveryLocationService.activeDeliveryId(this)?.startsWith("monitor:") == true)
-                        stopNativeLocation(DeliveryLocationService.activeDeliveryId(this))
+                        (DeliveryLocationService.activeDeliveryId(this) != idleId || previousHighAccuracy != snapshot.settings.shiftMonitoringHighAccuracy)) requestNativeLocationStart(idleId)
+                    if (idleId == null) {
+                        pendingStartDeliveryId?.takeIf { it.startsWith("monitor:") }?.let { stopNativeLocation(it) }
+                        DeliveryLocationService.activeDeliveryId(this)?.takeIf { it.startsWith("monitor:") }?.let { stopNativeLocation(it) }
+                    }
                 }
                 if (snapshot?.shiftActive == true && snapshot.settings.liveNotification && !hasNotificationPermission() && Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), SHIFT_NOTIFICATION_PERMISSION_REQUEST)
+                deliverPendingNativeAction()
                 postNativeMessage(JSONObject().put("type", "shift_tracker_state:sync_result").put("accepted", snapshot != null).toString())
             }
             "shift_tracker_state:clear" -> {
                 ShiftMonitorController.stop(this)
                 stopNativeLocation(null, stopAll = true)
                 NativeShiftState.clear(this)
-                NativeReturnObserver.clear(this)
+                DeliveryLocationService.clearReturnObservation(this)
             }
             "shift_tracker_shift:retracted" -> {
                 val shiftId=message.optString("shiftId").trim()
@@ -576,6 +581,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun queueActionFromIntent(intent: Intent?) {
+        intent?.getStringExtra("native_return_delivery")?.let { id ->
+            val token = NativeSessionGate.Token(id, intent.getLongExtra("native_return_generation", -1L))
+            if (DeliveryLocationService.isRequestedSession(token)) NativeShiftState.queueObservedReturn(this,
+                intent.getStringExtra("native_return_shift") ?: "", id)
+            intent.removeExtra("native_return_delivery")
+        }
         val action = intent?.getStringExtra(NativeActionReceiver.EXTRA_ACTION) ?: return
         NativeShiftState.queueAction(this, action)
         intent.removeExtra(NativeActionReceiver.EXTRA_ACTION)
@@ -583,6 +594,14 @@ class MainActivity : ComponentActivity() {
 
     private fun deliverPendingNativeAction() {
         val pending = NativeShiftState.peekPendingAction(this) ?: return
+        if (pending.optString("id").startsWith("native-return-")) {
+            val canonical = NativeShiftState.read(this) ?: return
+            // Reconciliation emits a fresh canonical snapshot only after GPS ingestion.
+            // Retain the queued tap until existing customer/return/proof rules permit it.
+            if (canonical.shiftId == pending.optString("expectedShiftId") &&
+                canonical.activityId == pending.optString("expectedActivityId") &&
+                "back_at_store" !in canonical.allowedActions) return
+        }
         val message = JSONObject()
             .put("type", "shift_tracker_native_action:requested")
             .put("id", pending.optString("id"))
@@ -784,6 +803,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startNativeLocationService(deliveryId: String) {
+        if (deliveryId.startsWith("monitor:") && ShiftMonitorController.idleId(this) != deliveryId) {
+            stopNativeLocation(deliveryId)
+            return
+        }
         val token = pendingStartToken ?: return
         if (token.deliveryId != deliveryId || !DeliveryLocationService.isRequestedSession(token)) return
         pendingStartDeliveryId = null

@@ -40,6 +40,8 @@ data class ShiftSnapshot(
     val allowedActions: Set<String>,
     val updatedAt: Long,
     val settings: NativeFeatureSettings,
+    val storeExitObserved: Boolean = false,
+    val latestDeliveredAt: Long = 0L,
 ) {
     val isStale: Boolean get() = updatedAt <= 0L || System.currentTimeMillis() - updatedAt > 12 * 60 * 60_000L
 }
@@ -89,6 +91,17 @@ object NativeShiftState {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SNAPSHOT, null) ?: return null
         if (raw.length > MAX_SNAPSHOT_CHARS) return null
         return runCatching { parse(JSONObject(raw)) }.getOrNull()
+    }
+
+    /** Only queues intent; canonical Web checks customers, return and proof after replay. */
+    fun queueObservedReturn(context: Context, shiftId: String, deliveryId: String): Boolean {
+        val snapshot = read(context) ?: return false
+        if (snapshot.isStale || !snapshot.shiftActive || snapshot.shiftId != shiftId || snapshot.activityId != deliveryId ||
+            snapshot.requiredCustomers <= 0 || snapshot.deliveredCustomers < snapshot.requiredCustomers) return false
+        val payload = JSONObject().put("id", "native-return-${System.currentTimeMillis()}")
+            .put("action", "back_at_store").put("createdAt", System.currentTimeMillis())
+            .put("expectedStateRevision", "").put("expectedShiftId", shiftId).put("expectedActivityId", deliveryId)
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_PENDING_ACTION, payload.toString()).commit()
     }
 
     fun queueAction(context: Context, action: String): Boolean {
@@ -253,6 +266,8 @@ object NativeShiftState {
             .put("allowedActions", actions)
             .put("updatedAtEpochMs", System.currentTimeMillis())
             .put("settings", settings)
+            .put("storeExitObserved", raw.optBoolean("storeExitObserved", false))
+            .put("latestDeliveredAtEpochMs", raw.optLong("latestDeliveredAtEpochMs", 0L))
     }
 
     private fun parse(value: JSONObject): ShiftSnapshot? {
@@ -261,7 +276,7 @@ object NativeShiftState {
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
         val quickTasks = buildList { value.optJSONArray("quickTasks")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it.isNotBlank() }?.let(::add) } }
-        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), quickTasks, value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic"), s.optBoolean("alwaysOnShiftMonitoring"), s.optBoolean("shiftMonitoringHighAccuracy")))
+        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), quickTasks, value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic"), s.optBoolean("alwaysOnShiftMonitoring"), s.optBoolean("shiftMonitoringHighAccuracy")), value.optBoolean("storeExitObserved"), value.optLong("latestDeliveredAtEpochMs"))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }

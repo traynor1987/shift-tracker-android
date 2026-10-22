@@ -84,6 +84,7 @@ class DeliveryLocationService : Service() {
             if (if (id == null) requestedSession.stopAll() else requestedSession.stopTargeted(id)) saveRequestedSession(context)
         }
         fun requestedGeneration() = requestedSession.generation
+        fun clearReturnObservation(context: Context) { journalExecutor.execute { NativeReturnObserver.clear(context) } }
         @Volatile private var recoveryQueueCount: Int? = null
 
         private val dispatchHandler = Handler(Looper.getMainLooper())
@@ -271,6 +272,10 @@ class DeliveryLocationService : Service() {
     }
 
     private fun startTracking(requestedDeliveryId: String, commandToken: NativeSessionGate.Token? = requestedSession.current) {
+        if (requestedDeliveryId.startsWith("monitor:") && ShiftMonitorController.idleId(this) != requestedDeliveryId) {
+            if (!running) stopSelfResult(latestStartId)
+            return
+        }
         if (running && deliveryId == requestedDeliveryId && activeCommandToken == commandToken) {
             flushPendingSamples()
             emitState(if (sampleReceivedForSession) "sample_received" else "waiting_for_fix", requestedDeliveryId, null)
@@ -291,8 +296,8 @@ class DeliveryLocationService : Service() {
         }
         if (!isLocationProviderEnabled()) {
             emitState("location_provider_disabled", requestedDeliveryId, "Android Location services are disabled; turn on Location and retry the delivery")
-            failTracking()
-            return
+            // Keep the permitted foreground request alive; restoration of GPS can
+            // resume the stream without an Activity or network connection.
         }
         deliveryId = requestedDeliveryId
         activeCommandToken = commandToken
@@ -322,7 +327,7 @@ class DeliveryLocationService : Service() {
         lastSampleRejection = null
         recoveryStore = "not_attempted"
         nativeMessageDispatch = "not_attempted"
-        nativeReturned = false
+        nativeReturned = NativeReturnObserver.hasReturn(this, requestedDeliveryId, commandToken?.generation ?: -1L)
         samplingMode = if (idleMonitoring()) { if (ShiftMonitorController.highAccuracy(this)) "shift_high_accuracy" else "shift_adaptive" } else "near_store"
         lastSampleReceiptAt = null
         lastRealDistanceMetres = null
@@ -349,6 +354,7 @@ class DeliveryLocationService : Service() {
         if (!running) return
         val now = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtime()
+        if (idleMonitoring() && elapsed - (acceptedFixProgress.lastReceiptElapsedMs ?: sessionStartedAtElapsedMs) < 120_000L) return
         if (!NativeTrackingPolicy.shouldRecoverStalledStream(elapsed, sessionStartedAtElapsedMs, acceptedFixProgress.lastReceiptElapsedMs, lastRecoveryElapsedMs)) return
         lastRecoveryElapsedMs = elapsed
         lastWatchdogRecoveryAt = now
@@ -561,17 +567,23 @@ class DeliveryLocationService : Service() {
         }
         val journalToken = sessionGate.current ?: return
         val receivedElapsedMs = SystemClock.elapsedRealtime()
+        val observationGeneration = activeCommandToken?.generation ?: return
         journalExecutor.execute {
             if (!sessionGate.isCurrent(journalToken)) return@execute
             val result = sampleStore.append(sample)
             recoveryQueueCount = sampleStore.pendingCount()
             // Native observation and persistence do not wait on bridge dispatch or React.
-            val observation = if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken))
-                returnObserver.observe(sample, activeCommandToken?.generation ?: -1L) else null
+            val observation = synchronized(sessionGate) {
+                if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken))
+                    returnObserver.observe(sample, observationGeneration) else null
+            }
             if (observation != null) dispatchHandler.post {
                 if (sessionGate.isCurrent(journalToken) && running) {
-                    nativeReturned = true
-                    runCatching { startForegroundCompat() }
+                    val detected = observation.optLong("confirmedAt") > 0
+                    if (nativeReturned != detected) {
+                        nativeReturned = detected
+                        runCatching { startForegroundCompat() }
+                    }
                 }
             }
             dispatchHandler.post {
@@ -739,19 +751,35 @@ class DeliveryLocationService : Service() {
     }.getOrDefault(false)
 
     private fun startForegroundCompat() {
+        val mirror = NativeShiftState.read(this)
+        val canQueueReturn = nativeReturned && mirror?.activityId == deliveryId && mirror.requiredCustomers > 0 && mirror.deliveredCustomers >= mirror.requiredCustomers && mirror.latestDeliveredAt > 0 && NativeReturnObserver.confirmedSampleAt(this) >= mirror.latestDeliveredAt
+        val returnIntent = Intent(this, MainActivity::class.java)
+            .setAction("native_return:${deliveryId}:${activeCommandToken?.generation}")
+            .putExtra("native_return_delivery", deliveryId)
+            .putExtra("native_return_shift", mirror?.shiftId)
+            .putExtra("native_return_generation", activeCommandToken?.generation ?: -1L)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle(if (nativeReturned) "Returned to Store" else if (idleMonitoring()) "Shift monitoring active" else "Shift Tracker delivery GPS")
-            .setContentText(if (nativeReturned) "Return detected · open to reconcile and complete" else if (idleMonitoring()) "Adaptive location monitoring throughout your shift" else "Delivery tracking is active")
+            .setContentTitle(if (nativeReturned) { if (canQueueReturn) "Returned to Store" else "Store location detected" } else if (idleMonitoring()) "Shift monitoring active" else "Shift Tracker delivery GPS")
+            .setContentText(if (nativeReturned) { if (canQueueReturn) "Return detected · open to reconcile and complete" else "Customer delivery outstanding · open to review" } else if (idleMonitoring()) "Adaptive location monitoring throughout your shift" else "Delivery tracking is active")
             .setContentIntent(android.app.PendingIntent.getActivity(this, 2101,
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+            .apply { if (nativeReturned) addAction(0, if (canQueueReturn) "Back at Store" else "Review return",
+                android.app.PendingIntent.getActivity(this@DeliveryLocationService, 2102, returnIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)) }
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         else startForeground(NOTIFICATION_ID, notification)
+        if (nativeReturned) {
+            val id = deliveryId
+            val generation = activeCommandToken?.generation
+            journalExecutor.execute { NativeReturnObserver.notificationPosted(this, id, generation) }
+        }
     }
 
     private fun createNotificationChannel() {

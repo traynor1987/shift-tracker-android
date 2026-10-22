@@ -31,7 +31,14 @@ class NativeReturnObserver(private val context: Context) {
                 policy.firstInsideAt = saved.optLong("firstInsideAt")
                 policy.confirmedAt = saved.optLong("confirmedAt")
                 policy.exactEntryAt = saved.optLong("exactEntryAt")
-            } else saved = JSONObject()
+            } else {
+                saved = JSONObject()
+                if (snapshot.storeExitObserved && snapshot.storeExitAt > 0 && snapshot.storeEntryAt == 0L) {
+                    policy.exitAt = snapshot.storeExitAt
+                    policy.presence = "outside"
+                    policy.lastAt = snapshot.storeExitAt
+                }
+            }
         }
         if (sample.timestampEpochMs < snapshot.activityStartedAt) return null
         val distance = NativeTrackingPolicy.distanceMetres(sample.latitude, sample.longitude,
@@ -43,16 +50,31 @@ class NativeReturnObserver(private val context: Context) {
             .put("lastAt", policy.lastAt).put("pendingAt", policy.pendingAt).put("pendingObserved", policy.pendingObserved)
             .put("exitAt", policy.exitAt).put("firstInsideAt", policy.firstInsideAt)
             .put("confirmedAt", policy.confirmedAt).put("exactEntryAt", policy.exactEntryAt)
-            .put("persistedAt", System.currentTimeMillis())
+            .put("persistedAt", if (changed) System.currentTimeMillis() else saved.optLong("persistedAt"))
             .put("nativeConfirmedAt", if (changed) System.currentTimeMillis() else saved.optLong("nativeConfirmedAt"))
-            .put("notificationAt", saved.optLong("notificationAt"))
+            .put("notificationAt", runCatching { JSONObject(prefs.getString("state", "{}")!!).optLong("notificationAt") }.getOrDefault(0L))
         // A failed checkpoint must retry from the last durable state.
         if (!prefs.edit().putString("state", next.toString()).commit()) { identity = ""; return null }
         saved = next
-        return if (changed) next else null
+        return next
     }
 
     companion object {
+        fun hasReturn(context: Context, id: String, generation: Long): Boolean = runCatching {
+            val v = JSONObject(context.getSharedPreferences("native_return_observation_v1", Context.MODE_PRIVATE).getString("state", "{}")!!)
+            val mirror = NativeShiftState.read(context)
+            v.optString("deliveryId") == id && v.optLong("generation") == generation && v.optLong("confirmedAt") > 0 &&
+                mirror?.shiftActive == true && mirror.activityId == id && mirror.shiftId == v.optString("shiftId")
+        }.getOrDefault(false)
+        fun notificationPosted(context: Context, id: String?, generation: Long?) {
+            val p = context.getSharedPreferences("native_return_observation_v1", Context.MODE_PRIVATE)
+            val v = runCatching { JSONObject(p.getString("state", "{}")!!) }.getOrDefault(JSONObject())
+            if (v.optString("deliveryId") == id && v.optLong("generation") == generation && v.optLong("confirmedAt") > 0)
+                p.edit().putString("state", v.put("notificationAt", System.currentTimeMillis()).toString()).commit()
+        }
+        fun confirmedSampleAt(context: Context): Long = runCatching {
+            JSONObject(context.getSharedPreferences("native_return_observation_v1", Context.MODE_PRIVATE).getString("state", "{}")!!).optLong("confirmedAt")
+        }.getOrDefault(0L)
         fun diagnostics(context: Context): JSONObject = runCatching {
             val value = JSONObject(context.getSharedPreferences("native_return_observation_v1", Context.MODE_PRIVATE).getString("state", "{}")!!)
             JSONObject().put("nativeReturnObservedAt", value.optLong("firstInsideAt"))
