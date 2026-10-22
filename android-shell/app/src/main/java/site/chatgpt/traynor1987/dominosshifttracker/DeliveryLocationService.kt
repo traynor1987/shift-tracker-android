@@ -167,6 +167,9 @@ class DeliveryLocationService : Service() {
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var sampleStore: NativeSampleStore
+    private lateinit var returnObserver: NativeReturnObserver
+    private var nativeReturned = false
+    private fun idleMonitoring() = deliveryId?.startsWith("monitor:") == true
     private lateinit var preferences: SharedPreferences
     private var deliveryId: String? = null
     private var activeCommandToken: NativeSessionGate.Token? = null
@@ -228,6 +231,7 @@ class DeliveryLocationService : Service() {
         instance = this
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         sampleStore = journalStore(this)
+        returnObserver = NativeReturnObserver(this)
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         loadRequestedSession(this)
         createNotificationChannel()
@@ -318,7 +322,8 @@ class DeliveryLocationService : Service() {
         lastSampleRejection = null
         recoveryStore = "not_attempted"
         nativeMessageDispatch = "not_attempted"
-        samplingMode = "near_store"
+        nativeReturned = false
+        samplingMode = if (idleMonitoring()) { if (ShiftMonitorController.highAccuracy(this)) "shift_high_accuracy" else "shift_adaptive" } else "near_store"
         lastSampleReceiptAt = null
         lastRealDistanceMetres = null
         lastWatchdogRecoveryAt = null
@@ -369,7 +374,10 @@ class DeliveryLocationService : Service() {
         }
     }
 
-    private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (nearStore) {
+    private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (idleMonitoring()) {
+        LocationRequest.Builder(if (ShiftMonitorController.highAccuracy(this)) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, 30_000L)
+            .setMinUpdateIntervalMillis(15_000L).setMinUpdateDistanceMeters(0f).setMaxUpdateDelayMillis(30_000L).build()
+    } else if (nearStore) {
         // Delivery start and return use time-based fixes so parking immediately
         // after crossing cannot leave confirmation waiting for another 5m move.
         LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
@@ -404,7 +412,7 @@ class DeliveryLocationService : Service() {
                     emitState("waiting_for_fix", deliveryId, "Location-update request accepted in $samplingMode mode")
                     if (initial) {
                         checkProviderAvailability(generation, requestedDeliveryId)
-                        requestInitialFixes(generation, requestedDeliveryId)
+                        if (!idleMonitoring()) requestInitialFixes(generation, requestedDeliveryId)
                         flushPendingSamples()
                     }
                 }
@@ -526,6 +534,13 @@ class DeliveryLocationService : Service() {
             lastSampleRejection = rejection
             return
         }
+        if (idleMonitoring()) {
+            // At-store fixes update bounded liveness only; never append a personal route.
+            acceptedFixProgress.accepted("$id:${location.time}", SystemClock.elapsedRealtime())
+            lastSampleReceivedAt = location.time
+            diagnostic = "SAMPLE_RECEIVED"
+            return
+        }
         updateSamplingModeFor(location, id)
         val sample = NativeLocationSample(
             sampleId = "$id:${location.time}",
@@ -550,6 +565,15 @@ class DeliveryLocationService : Service() {
             if (!sessionGate.isCurrent(journalToken)) return@execute
             val result = sampleStore.append(sample)
             recoveryQueueCount = sampleStore.pendingCount()
+            // Native observation and persistence do not wait on bridge dispatch or React.
+            val observation = if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken))
+                returnObserver.observe(sample, activeCommandToken?.generation ?: -1L) else null
+            if (observation != null) dispatchHandler.post {
+                if (sessionGate.isCurrent(journalToken) && running) {
+                    nativeReturned = true
+                    runCatching { startForegroundCompat() }
+                }
+            }
             dispatchHandler.post {
                 // Journal acceptance renews liveness immediately. Bridge replay
                 // may be yielding for seconds and must not cause false stalls.
@@ -663,8 +687,13 @@ class DeliveryLocationService : Service() {
         sampleReceivedForSession = false
         lastSampleReceivedAt = null
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
-        stopForegroundCompat()
-        stopSelfResult(latestStartId)
+        val monitor = ShiftMonitorController.idleId(this)
+        if (monitor != null && target != null) {
+            startTracking(monitor, requestSession(this, monitor))
+        } else {
+            stopForegroundCompat()
+            stopSelfResult(latestStartId)
+        }
     }
 
     private fun failTracking() {
@@ -712,8 +741,11 @@ class DeliveryLocationService : Service() {
     private fun startForegroundCompat() {
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("Shift Tracker delivery GPS")
-            .setContentText("Delivery tracking is active")
+            .setContentTitle(if (nativeReturned) "Returned to Store" else if (idleMonitoring()) "Shift monitoring active" else "Shift Tracker delivery GPS")
+            .setContentText(if (nativeReturned) "Return detected · open to reconcile and complete" else if (idleMonitoring()) "Adaptive location monitoring throughout your shift" else "Delivery tracking is active")
+            .setContentIntent(android.app.PendingIntent.getActivity(this, 2101,
+                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -797,6 +829,8 @@ class DeliveryLocationService : Service() {
         .put("nativeDispatchBacklogCount", dispatchQueue.backlogCount)
         .put("nativeReplayBarrierCount", dispatchQueue.replayBarrierCount)
         .put("samplingMode", samplingMode)
+        .put("shiftMonitoringEnabled", ShiftMonitorController.idleId(this) != null)
+        .apply { val observation = NativeReturnObserver.diagnostics(this@DeliveryLocationService); observation.keys().forEach { key -> put(key, observation.get(key)) } }
         .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
         .put("watchdogRecoveryCount", watchdogRecoveryCount)
         .put("lastWatchdogRecoveryAt", lastWatchdogRecoveryAt ?: JSONObject.NULL)

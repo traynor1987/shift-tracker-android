@@ -51,6 +51,8 @@ data class NativeFeatureSettings(
     val breakReminders: Boolean = false,
     val taskReminders: Boolean = false,
     val photoCompression: String = "automatic",
+    val alwaysOnShiftMonitoring: Boolean = false,
+    val shiftMonitoringHighAccuracy: Boolean = false,
 )
 
 /** Minimal, non-authoritative mirror used only by Android surfaces. */
@@ -220,6 +222,8 @@ object NativeShiftState {
             .put("shiftReminders", inputSettings.optBoolean("shiftReminders", false))
             .put("breakReminders", inputSettings.optBoolean("breakReminders", false))
             .put("taskReminders", inputSettings.optBoolean("taskReminders", false))
+            .put("alwaysOnShiftMonitoring", inputSettings.optBoolean("alwaysOnShiftMonitoring", false))
+            .put("shiftMonitoringHighAccuracy", inputSettings.optBoolean("shiftMonitoringHighAccuracy", false))
             .put("photoCompression", if (inputSettings.optString("photoCompression") == "original") "original" else "automatic")
         return JSONObject()
             .put("stateRevision", raw.optString("stateRevision").trim().take(240))
@@ -257,7 +261,7 @@ object NativeShiftState {
         val actions = buildSet { value.optJSONArray("allowedActions")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it in ACTIONS }?.let(::add) } }
         val s = value.optJSONObject("settings") ?: JSONObject()
         val quickTasks = buildList { value.optJSONArray("quickTasks")?.let { raw -> for (index in 0 until raw.length()) raw.optString(index).takeIf { it.isNotBlank() }?.let(::add) } }
-        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), quickTasks, value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic")))
+        return ShiftSnapshot(value.optString("stateRevision"), value.optString("shiftId"), value.optString("activityId"), value.optBoolean("shiftActive"), value.optLong("shiftStartedAtEpochMs"), activity, value.optString("activityName"), value.optLong("activityStartedAtEpochMs"), value.optInt("deliveries"), value.optString("estimatedPay"), value.optLong("paidTimeSeconds"), value.optLong("breakTimeSeconds"), value.optString("deliveryReimbursement"), value.optString("shiftTotal"), value.optString("miles"), value.optInt("runs"), quickTasks, value.optInt("deliveredCustomers"), value.optInt("requiredCustomers"), value.optInt("earlyDispatchGapSeconds"), value.optLong("storeExitAtEpochMs"), value.optLong("storeEntryAtEpochMs"), value.optString("pausedTaskName"), value.optString("storeStatus", "unknown"), actions, value.optLong("updatedAtEpochMs"), NativeFeatureSettings(s.optBoolean("liveNotification", true), s.optBoolean("notificationActions", true), s.optBoolean("shiftReminders"), s.optBoolean("breakReminders"), s.optBoolean("taskReminders"), s.optString("photoCompression", "automatic"), s.optBoolean("alwaysOnShiftMonitoring"), s.optBoolean("shiftMonitoringHighAccuracy")))
     }
 
     private fun peekPendingActionUnsafe(context: Context): JSONObject? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PENDING_ACTION, null)?.let { runCatching { JSONObject(it) }.getOrNull() }

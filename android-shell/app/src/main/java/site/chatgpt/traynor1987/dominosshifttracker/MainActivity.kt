@@ -184,7 +184,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var monitoringActivityResumed = false
+
     override fun onResume() {
+        monitoringActivityResumed = true
         super.onResume()
         activeActivity = this
         if (::webView.isInitialized) {
@@ -223,6 +226,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        monitoringActivityResumed = false
         // A phone call or app switch must not suspend the hosted tracker while
         // a native Wear transfer is still reporting progress back to it.
         // Android may background the Activity, but its WebView state is kept.
@@ -469,10 +473,23 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_file:share" -> requestNativeShare(message)
             "shift_tracker_state:sync" -> {
                 val snapshot = NativeShiftState.replace(this, message)
+                if (snapshot != null) {
+                    runCatching { ShiftMonitorController.sync(this, snapshot) }
+                    val idleId = ShiftMonitorController.idleId(this)
+                    if (monitoringActivityResumed && idleId != null && snapshot.activity !in setOf("delivery_single", "delivery_double") &&
+                        DeliveryLocationService.activeDeliveryId(this) != idleId) requestNativeLocationStart(idleId)
+                    if (idleId == null && DeliveryLocationService.activeDeliveryId(this)?.startsWith("monitor:") == true)
+                        stopNativeLocation(DeliveryLocationService.activeDeliveryId(this))
+                }
                 if (snapshot?.shiftActive == true && snapshot.settings.liveNotification && !hasNotificationPermission() && Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), SHIFT_NOTIFICATION_PERMISSION_REQUEST)
                 postNativeMessage(JSONObject().put("type", "shift_tracker_state:sync_result").put("accepted", snapshot != null).toString())
             }
-            "shift_tracker_state:clear" -> NativeShiftState.clear(this)
+            "shift_tracker_state:clear" -> {
+                ShiftMonitorController.stop(this)
+                stopNativeLocation(null, stopAll = true)
+                NativeShiftState.clear(this)
+                NativeReturnObserver.clear(this)
+            }
             "shift_tracker_shift:retracted" -> {
                 val shiftId=message.optString("shiftId").trim()
                 val revision=message.optLong("revision",-1)
