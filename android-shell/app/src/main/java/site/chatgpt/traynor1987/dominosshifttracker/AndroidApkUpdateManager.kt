@@ -46,7 +46,8 @@ class AndroidApkUpdateManager(
 
     @Volatile private var candidate: Candidate? = null
 
-    fun check(manual: Boolean, installedWebVersion: String?) {
+    fun check(manual: Boolean, installedWebVersion: String?, channel: String = "stable") {
+        val selectedChannel = if (manual && channel == "candidate") "candidate" else "stable"
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!ApkUpdatePolicy.shouldCheck(prefs.getLong(LAST_SUCCESSFUL_CHECK, 0L), System.currentTimeMillis(), manual)) {
             emit(status("rate_limited").put("message", "Android APK was checked today"))
@@ -55,12 +56,12 @@ class AndroidApkUpdateManager(
         emit(status("checking"))
         executor.execute {
             runCatching {
-                val remote = discoverStableRelease()
+                val remote = discoverRelease(selectedChannel)
                 prefs.edit().putLong(LAST_SUCCESSFUL_CHECK, System.currentTimeMillis()).apply()
                 val compatible = ApkUpdatePolicy.compatibleWithWeb(installedWebVersion, remote.metadata.minimumWebVersion)
                 candidate = remote
                 status(if (ApkUpdatePolicy.isNewer(remote.metadata.versionCode, installedVersionCode()) && compatible) "available" else if (!compatible) "web_refresh_required" else "up_to_date")
-                    .put("latestVersion", remote.metadata.versionName)
+                    .put("channel", selectedChannel).put("latestVersion", remote.metadata.versionName)
                     .put("latestVersionCode", remote.metadata.versionCode)
                     .put("minimumWebVersion", remote.metadata.minimumWebVersion ?: JSONObject.NULL)
                     .put("releaseNotes", JSONArray(remote.metadata.releaseNotes))
@@ -97,22 +98,22 @@ class AndroidApkUpdateManager(
         }
     }
 
-    private fun discoverStableRelease(): Candidate {
+    private fun discoverRelease(channel: String): Candidate {
         val releases = JSONArray(fetchText(RELEASES_URL, MAX_METADATA_BYTES * 16))
         val release = (0 until releases.length()).asSequence().map { releases.getJSONObject(it) }
-            .firstOrNull { !it.optBoolean("draft") && !it.optBoolean("prerelease") }
+            .firstOrNull { !it.optBoolean("draft") && it.optBoolean("prerelease") == (channel == "candidate") }
             ?: error("No stable Android APK release is published yet")
         val assets = release.optJSONArray("assets") ?: error("The stable release has no files")
         val metadataAsset = assetNamed(assets, METADATA_FILE) ?: error("The stable release metadata is missing")
-        val metadata = parseMetadata(JSONObject(fetchText(metadataAsset.getString("browser_download_url"), MAX_METADATA_BYTES)))
+        val metadata = parseMetadata(JSONObject(fetchText(metadataAsset.getString("browser_download_url"), MAX_METADATA_BYTES)), channel)
         val apkAsset = assetNamed(assets, metadata.apkFile) ?: error("The stable release APK is missing")
         val url = apkAsset.optString("browser_download_url")
         require(url.startsWith("https://")) { "The stable release APK link is invalid" }
         return Candidate(metadata, url, release.optLong("id"))
     }
 
-    private fun parseMetadata(raw: JSONObject): ApkUpdatePolicy.Metadata {
-        require(raw.optString("channel") == "stable") { "The release is not a stable Android APK" }
+    private fun parseMetadata(raw: JSONObject, channel: String): ApkUpdatePolicy.Metadata {
+        require(raw.optString("channel") == channel) { "The release is not a stable Android APK" }
         val versionName = raw.optString("versionName")
         val versionCode = raw.optLong("versionCode", -1L)
         val apkFile = raw.optString("apkFile")

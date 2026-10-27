@@ -15,7 +15,7 @@ import org.json.JSONObject
 class NativeReturnPersistenceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val start = System.currentTimeMillis() - 300_000L
-    private fun mirror(id: String = "synthetic-delivery", enabled: Boolean = true, delivered: Int = 2): ShiftSnapshot {
+    private fun mirror(id: String = "synthetic-delivery", enabled: Boolean = true, delivered: Int = 2, profile: JSONObject? = null): ShiftSnapshot {
         val raw = JSONObject().put("stateRevision", "synthetic-1").put("shiftId", "synthetic-shift")
             .put("activityId", id).put("shiftActive", true).put("shiftStartedAtEpochMs", start)
             .put("activityStartedAtEpochMs", start).put("activity", "delivery_double")
@@ -23,6 +23,7 @@ class NativeReturnPersistenceTest {
             .put("storeExitAtEpochMs", start + 10_000).put("storeExitObserved", true)
             .put("latestDeliveredAtEpochMs", start + 60_000)
             .put("settings", JSONObject().put("liveNotification", false).put("alwaysOnShiftMonitoring", enabled))
+        profile?.let { raw.put("storeProfile", it) }
         var value: ShiftSnapshot? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync { value = NativeShiftState.replace(context, raw) }
         return requireNotNull(value)
@@ -42,6 +43,28 @@ class NativeReturnPersistenceTest {
         assertTrue(NativeReturnObserver.hasReturn(context, "synthetic-delivery", 7))
         val restored = NativeReturnObserver(context).observe(point(start + 122_000), 7)!!
         assertEquals(value.getLong("confirmedAt"), restored.getLong("confirmedAt"))
+    }
+    private fun maghull(verified: Boolean, revision: String = "physical-proof-v1") = JSONObject()
+        .put("id", "maghull").put("latitude", 53.516605).put("longitude", -2.943185)
+        .put("radius", 35).put("verified", verified).put("revision", revision)
+    @Test fun provisionalMaghullNeverConfirmsReturn() {
+        mirror(profile=maghull(false))
+        assertNull(NativeReturnObserver(context).observe(point(), 7))
+        assertFalse(NativeShiftState.queueObservedReturn(context,"synthetic-shift","synthetic-delivery"))
+    }
+    @Test fun selectedMaghullUsesItsOwnCoordinatesAndRestoresIdentity() {
+        mirror(profile=maghull(true))
+        val wrongStore = NativeReturnObserver(context).observe(point(), 7)!!
+        assertEquals(0L, wrongStore.getLong("confirmedAt"))
+        val point = NativeLocationSample("maghull", "synthetic-delivery", 53.516605, -2.943185, start+122_000, 5f, null, null)
+        assertTrue(NativeReturnObserver(context).observe(point,7)!!.getLong("confirmedAt") > 0)
+        assertTrue(NativeReturnObserver.hasReturn(context,"synthetic-delivery",7))
+        mirror(profile=maghull(true,"revised-proof"))
+        assertFalse(NativeReturnObserver.hasReturn(context,"synthetic-delivery",7))
+    }
+    @Test fun protectedStoreRejectsCoordinateOverride() {
+        assertEquals(NativeStoreProfile.ORMSKIRK, NativeStoreProfile.parse(JSONObject().put("id","ormskirk").put("latitude",0)))
+        assertNull(NativeStoreProfile.parse(JSONObject().put("id","maghull")))
     }
     @Test fun wrongDeliveryCannotWriteObservation() {
         assertNull(NativeReturnObserver(context).observe(point(id="unrelated"), 7))

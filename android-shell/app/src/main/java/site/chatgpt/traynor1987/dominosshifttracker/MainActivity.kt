@@ -455,7 +455,7 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_shell:refresh_requested", "shift_tracker_web_update:check" -> checkWebUpdate()
             "shift_tracker_web_update:install" -> installWebUpdate()
             "shift_tracker_web_update:rollback" -> rollbackWebUpdate()
-            "shift_tracker_apk_update:check" -> apkUpdateManager.check(message.optBoolean("manual", true), message.optString("webVersion").takeIf { it.isNotBlank() })
+            "shift_tracker_apk_update:check" -> apkUpdateManager.check(message.optBoolean("manual", true), message.optString("webVersion").takeIf { it.isNotBlank() }, message.optString("channel", "stable"))
             "shift_tracker_apk_update:install" -> apkUpdateManager.downloadAndInstall()
             "shift_tracker_wear_settings:get" -> PhoneWearSettings.refresh(this)
             "shift_tracker_wear_settings:set" -> PhoneWearSettings.edit(this, message.optString("key"), message.optString("value"))
@@ -468,7 +468,12 @@ class MainActivity : ComponentActivity() {
                 val id = message.optString("id").trim()
                 if (id.isNotBlank() && id.length <= 160) DispatchNotificationStore.acknowledge(this, id)
             }
-            "shift_tracker_location:start" -> requestNativeLocationStart(message.optString("deliveryId"))
+            "shift_tracker_location:start" -> {
+                val profile = NativeStoreProfile.parse(message.optJSONObject("storeProfile"))
+                if (profile == null || profile != NativeShiftState.storeProfile(this)) {
+                    sendNativeState("service_not_started", message.optString("deliveryId"), "Sync the selected store profile before starting GPS")
+                } else requestNativeLocationStart(message.optString("deliveryId"))
+            }
             "shift_tracker_location:stop" -> stopNativeLocation(message.optString("deliveryId"))
             "shift_tracker_location:stop_all" -> stopNativeLocation(null, stopAll = true)
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
@@ -476,8 +481,14 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_file:save" -> requestNativeFileSave(message)
             "shift_tracker_file:share" -> requestNativeShare(message)
             "shift_tracker_state:sync" -> {
+                val previousProfile = NativeShiftState.storeProfile(this)
                 val snapshot = NativeShiftState.replace(this, message)
                 if (snapshot != null) {
+                    if (previousProfile != NativeShiftState.storeProfile(this)) {
+                        DeliveryLocationService.clearReturnObservation(this)
+                        val activeId = DeliveryLocationService.activeDeliveryId(this)
+                        if (activeId != null) requestNativeLocationStart(activeId)
+                    }
                     val previousHighAccuracy = ShiftMonitorController.highAccuracy(this)
                     val monitorSaved = runCatching { ShiftMonitorController.sync(this, snapshot) }.isSuccess
                     if (!monitorSaved) return
@@ -1017,6 +1028,8 @@ class MainActivity : ComponentActivity() {
 
     private fun nativeDiagnostics(): JSONObject = JSONObject()
         .put("sessionScopedCommands", true)
+        .put("storeProfiles", true)
+        .put("candidateApkUpdates", true)
         .put("diagnostic", currentDiagnosticCode())
         .put("foregroundLocation", when {
             hasPreciseLocationPermission() -> "precise"

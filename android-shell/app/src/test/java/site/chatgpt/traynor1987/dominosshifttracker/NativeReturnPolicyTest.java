@@ -9,6 +9,7 @@ public class NativeReturnPolicyTest {
  @Test public void rapidReentryRejected() { NativeReturnPolicy p=new NativeReturnPolicy();p.observe(1000,0,5);p.observe(3000,100,5);assertFalse(p.observe(5000,0,5));assertEquals(0,p.confirmedAt); }
  @Test public void borderlineFalseEntryRejected() { NativeReturnPolicy p=new NativeReturnPolicy();p.observe(1000,0,5);p.observe(3000,100,5);p.observe(40000,100,5);assertFalse(p.observe(65000,34,10));assertFalse(p.observe(67000,100,5));assertEquals(0,p.confirmedAt); }
  @Test public void startedOutsideCannotInventExit() { NativeReturnPolicy p=new NativeReturnPolicy();p.observe(1000,100,5);assertFalse(p.observe(70000,0,5));assertEquals(0,p.exitAt); }
+ @Test public void configuredRadiusChangesOnlySelectedPolicy() {NativeReturnPolicy p=new NativeReturnPolicy();p.observe(1000,50,5,60);assertEquals("inside",p.presence);NativeReturnPolicy protectedStore=new NativeReturnPolicy();protectedStore.observe(1000,50,5);assertEquals("outside",protectedStore.presence);}
  @Test public void modeOffByDefault() {assertEquals("stopped",ShiftMonitoringPolicy.mode(false,true,false,false));}
  @Test public void shiftLifecycle() {assertEquals("adaptive",ShiftMonitoringPolicy.mode(true,true,false,false));assertEquals("delivery",ShiftMonitoringPolicy.mode(true,true,true,false));assertEquals("stopped",ShiftMonitoringPolicy.mode(true,false,false,false));}
  @Test public void highAccuracyChoice() {assertEquals("high_accuracy",ShiftMonitoringPolicy.mode(true,true,false,true));}

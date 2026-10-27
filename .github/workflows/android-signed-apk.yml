@@ -269,13 +269,13 @@ jobs:
           curl --fail --silent --show-error --location "$METADATA_URL" > previous.json
           test "$(jq -r '.versionCode' previous.json)" -lt "$VERSION_CODE"
           test "$(jq -r '.wear.versionCode // 0' previous.json)" -lt "$WEAR_VERSION_CODE"
-          jq '.channel="candidate" | .minimumWebVersion="2.1.245" | .releaseNotes=["Opt-in adaptive shift monitoring and native store-return observation. Manual completion preserved. Physical Samsung Fold/Wear acceptance NOT TESTED. Requires Web 2.1.245 for settings."]' release-bundle/shift-tracker-android-release.json > candidate.json
+          jq '.channel="candidate" | .minimumWebVersion="2.1.249" | .releaseNotes=["Opt-in store-aware shift monitoring and native return observation. Maghull automation requires verified store profile. Manual completion preserved. Physical Samsung Fold/Wear acceptance NOT TESTED. Requires Web 2.1.249 for settings."]' release-bundle/shift-tracker-android-release.json > candidate.json
           mv candidate.json release-bundle/shift-tracker-android-release.json
           cat > candidate-notes.md <<'NOTES'
           Opt-in Always-On Shift Monitoring and native return observations while the Activity is closed.
-          Default OFF. Requires Web 2.1.245 for the new controls. Existing stable release is unchanged.
+          Default OFF. Requires Web 2.1.249 for the new controls. Existing stable release is unchanged.
           Android and Wear JVM suites, signing checks and Android persistence instrumentation passed for this commit.
           Physical Fold/Wear acceptance and battery measurements: NOT TESTED.
           Force-stop, permission revocation, manufacturer restrictions and reboot are not guaranteed; reopen the app.
           NOTES
-          gh release create v2.2.74-rc.1 release-bundle/*.apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Shift Tracker 2.2.74 — shift monitoring candidate" --notes-file candidate-notes.md --prerelease --latest=false
+          gh release create v2.2.75-rc.1 release-bundle/*.apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Shift Tracker 2.2.75 — store-aware monitoring candidate" --notes-file candidate-notes.md --prerelease --latest=false

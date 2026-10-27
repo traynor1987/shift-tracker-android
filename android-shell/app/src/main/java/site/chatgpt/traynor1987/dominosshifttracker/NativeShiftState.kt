@@ -87,6 +87,11 @@ object NativeShiftState {
         WearSync.clear(context)
     }
 
+    fun storeProfile(context: Context): NativeStoreProfile? {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SNAPSHOT, null) ?: return NativeStoreProfile.ORMSKIRK
+        return runCatching { NativeStoreProfile.parse(JSONObject(raw).optJSONObject("storeProfile")) }.getOrNull()
+    }
+
     fun read(context: Context): ShiftSnapshot? {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SNAPSHOT, null) ?: return null
         if (raw.length > MAX_SNAPSHOT_CHARS) return null
@@ -96,6 +101,7 @@ object NativeShiftState {
     /** Only queues intent; canonical Web checks customers, return and proof after replay. */
     fun queueObservedReturn(context: Context, shiftId: String, deliveryId: String): Boolean {
         val snapshot = read(context) ?: return false
+        if (storeProfile(context)?.verified != true) return false
         if (snapshot.isStale || !snapshot.shiftActive || snapshot.shiftId != shiftId || snapshot.activityId != deliveryId ||
             snapshot.requiredCustomers <= 0 || snapshot.deliveredCustomers < snapshot.requiredCustomers) return false
         val payload = JSONObject().put("id", "native-return-${System.currentTimeMillis()}")
@@ -209,6 +215,7 @@ object NativeShiftState {
 
     private fun validate(raw: JSONObject): JSONObject? {
         if (raw.toString().length > MAX_SNAPSHOT_CHARS) return null
+        val profile = NativeStoreProfile.parse(raw.optJSONObject("storeProfile")) ?: return null
         val shiftActive = raw.optBoolean("shiftActive", false)
         val activity = raw.optString("activity", "idle")
         if (activity !in ACTIVITIES) return null
@@ -239,6 +246,7 @@ object NativeShiftState {
             .put("shiftMonitoringHighAccuracy", inputSettings.optBoolean("shiftMonitoringHighAccuracy", false))
             .put("photoCompression", if (inputSettings.optString("photoCompression") == "original") "original" else "automatic")
         return JSONObject()
+            .put("storeProfile", profile.toJson())
             .put("stateRevision", raw.optString("stateRevision").trim().take(240))
             .put("shiftId", raw.optString("shiftId").trim().take(128))
             .put("activityId", raw.optString("activityId").trim().take(128))

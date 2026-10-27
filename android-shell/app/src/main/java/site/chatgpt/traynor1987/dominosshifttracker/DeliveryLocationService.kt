@@ -175,6 +175,7 @@ class DeliveryLocationService : Service() {
     private lateinit var sampleStore: NativeSampleStore
     private lateinit var returnObserver: NativeReturnObserver
     private var nativeReturned = false
+    private var sessionStoreIdentity = ""
     private var lastNotifiedConfirmation = 0L
     private fun idleMonitoring() = deliveryId?.startsWith("monitor:") == true
     private lateinit var preferences: SharedPreferences
@@ -305,6 +306,7 @@ class DeliveryLocationService : Service() {
             // Keep the permitted foreground request alive; restoration of GPS can
             // resume the stream without an Activity or network connection.
         }
+        sessionStoreIdentity = NativeShiftState.storeProfile(this)?.identity ?: "invalid"
         deliveryId = requestedDeliveryId
         activeCommandToken = commandToken
         val token = sessionGate.begin(requestedDeliveryId)
@@ -443,10 +445,11 @@ class DeliveryLocationService : Service() {
     }
 
     private fun updateSamplingModeFor(location: Location, id: String) {
-        val distance = NativeTrackingPolicy.distanceMetres(location.latitude, location.longitude, NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE)
+        val profile = NativeShiftState.storeProfile(this) ?: return
+        val distance = NativeTrackingPolicy.distanceMetres(location.latitude, location.longitude, profile.latitude, profile.longitude)
         lastRealDistanceMetres = distance.toFloat()
         val currentPolicyMode = if (samplingMode == "near_store") NativeTrackingPolicy.SamplingMode.NEAR_STORE else NativeTrackingPolicy.SamplingMode.ROUTE
-        val nextMode = if (NativeTrackingPolicy.samplingMode(location.latitude, location.longitude, currentPolicyMode) == NativeTrackingPolicy.SamplingMode.NEAR_STORE) "near_store" else "route"
+        val nextMode = if (distance <= if (currentPolicyMode == NativeTrackingPolicy.SamplingMode.NEAR_STORE) NativeTrackingPolicy.NEAR_STORE_EXIT_METRES else NativeTrackingPolicy.NEAR_STORE_ENTER_METRES) "near_store" else "route"
         if (nextMode == samplingMode || !running || deliveryId != id) return
         samplingMode = nextMode
         val generation = ++requestGeneration
@@ -576,16 +579,16 @@ class DeliveryLocationService : Service() {
         val receivedElapsedMs = SystemClock.elapsedRealtime()
         val observationGeneration = activeCommandToken?.generation ?: return
         journalExecutor.execute {
-            if (!sessionGate.isCurrent(journalToken)) return@execute
+            if (!sessionGate.isCurrent(journalToken) || sessionStoreIdentity != NativeShiftState.storeProfile(this)?.identity) return@execute
             val result = sampleStore.append(sample)
             recoveryQueueCount = sampleStore.pendingCount()
             // Native observation and persistence do not wait on bridge dispatch or React.
             val observation = synchronized(sessionGate) {
-                if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken))
+                if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken) && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity)
                     returnObserver.observe(sample, observationGeneration) else null
             }
             if (observation != null) dispatchHandler.post {
-                if (sessionGate.isCurrent(journalToken) && running) {
+                if (sessionGate.isCurrent(journalToken) && running && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity) {
                     val detected = observation.optLong("confirmedAt") > 0
                     if (nativeReturned != detected || (detected && observation.optLong("nativeConfirmedAt") != lastNotifiedConfirmation)) {
                         lastNotifiedConfirmation = observation.optLong("nativeConfirmedAt")
