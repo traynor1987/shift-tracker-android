@@ -1,4 +1,4 @@
-const WEB_VERSION = "2.1.246";
+const WEB_VERSION = "2.1.249";
 const CACHE_SEQUENCE = 168;
 const CACHE_PREFIX = "shift-tracker-v";
 const CACHE = `${CACHE_PREFIX}${CACHE_SEQUENCE}`;

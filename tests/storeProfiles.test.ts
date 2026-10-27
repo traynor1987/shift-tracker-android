@@ -5,6 +5,8 @@ import { filterStoreShifts, settingsForStore } from '../lib/storeProfiles.ts';
 test('provisional Maghull cannot inherit Ormskirk automation or mutate home calibration', () => {
  const home = emptyData().settings; const original = structuredClone(home);
  const cover = settingsForStore(home, 'maghull');
+ assert.equal(cover.singleRatePence, 85);
+ assert.equal(cover.doubleRatePence, 135);
  assert.equal(cover.locationAssistEnabled, false);
  assert.equal(cover.alwaysOnShiftMonitoring, false);
  assert.equal(cover.carryoutDepartureAssistEnabled, false);

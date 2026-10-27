@@ -9,7 +9,7 @@ test("dual geofences share the existing canonical GPS ingestion path", () => {
   assert.equal((source.match(/navigator\.geolocation\.watchPosition\(/g) ?? []).length, 1);
   const handler = source.slice(source.indexOf("const applyLocationReading"), source.indexOf("const recordRouteIssue"));
   assert.match(handler, /evaluateGeofenceSample\(\s*dominosGeofenceStateRef\.current/);
-  assert.match(handler, /evaluateGeofenceSample\(\s*realGeofenceStateRef\.current,\s*REAL_GEOFENCE_DEFINITION/);
+  assert.match(handler, /evaluateGeofenceSample\(\s*realGeofenceStateRef\.current,\s*realGeofenceDefinitionForSettings\(settings\)/);
   assert.match(handler, /applyRealGeofenceTransition/);
   assert.doesNotMatch(handler, /DOMINOS[\s\S]{0,500}playGeofenceTone/);
 });

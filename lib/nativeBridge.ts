@@ -6,7 +6,7 @@
  */
 import { appendDeveloperLog, getDeveloperSettings, nativeMessageType } from "./developerConsole.ts";
 
-export const WEB_APP_VERSION = "2.1.246";
+export const WEB_APP_VERSION = "2.1.249";
 export const TRUSTED_SHIFT_TRACKER_ORIGIN = "https://dominos-shift-tracker.traynor1987.chatgpt.site";
 export const NATIVE_BRIDGE_VERSION = 1;
 export const NATIVE_SAMPLE_STALE_MS = 60_000;
@@ -96,7 +96,9 @@ export type NativeStoreProofLocationResult =
   | { requestId: string; status: "ok"; latitude: number; longitude: number; timestampEpochMs: number; accuracy: number }
   | { requestId: string; status: "permission_required" | "unavailable"; message?: string };
 
+export type NativeStoreProfile = { id: "ormskirk" | "maghull"; latitude: number; longitude: number; radius: number; verified: boolean; revision: string };
 export type NativeShiftSnapshot = {
+  storeProfile?: NativeStoreProfile;
   /** Identifies the authoritative PWA state rendered by a companion. */
   stateRevision: string;
   shiftId?: string;
@@ -267,10 +269,10 @@ export type NativeWearUpdateMessage = {
   message?: string;
 };
 
-export function requestNativeApkUpdate(action: "check" | "install", manual = true) {
+export function requestNativeApkUpdate(action: "check" | "install", manual = true, channel: "stable" | "candidate" = "stable") {
   const bridge = getBridge();
   if (!bridge) return false;
-  try { bridge.postMessage(JSON.stringify({ type: `shift_tracker_apk_update:${action}`, manual, webVersion: WEB_APP_VERSION })); return true; } catch { return false; }
+  try { bridge.postMessage(JSON.stringify({ type: `shift_tracker_apk_update:${action}`, manual, channel, webVersion: WEB_APP_VERSION })); return true; } catch { return false; }
 }
 
 export function readNativeApkUpdateMessage(message: MessageEvent<unknown>): NativeApkUpdateMessage | null {
@@ -490,7 +492,7 @@ export function showNativeGeofenceAlert(direction: "left" | "returned", observed
   catch { return false; }
 }
 
-export function startNativeDeliveryTracking(deliveryId: string) {
+export function startNativeDeliveryTracking(deliveryId: string, storeProfile?: NativeStoreProfile, shiftId?: string) {
   const bridge = getBridge();
   if (!bridge || !deliveryId.trim()) {
     appendDeveloperLog("BRIDGE", "TRACKING_START_NOT_SENT", !bridge ? "Native bridge object unavailable" : "Delivery session id was empty", "error");
@@ -498,7 +500,7 @@ export function startNativeDeliveryTracking(deliveryId: string) {
   }
   appendDeveloperLog("BRIDGE", "TRACKING_START_SENT", "Active-delivery start command sent; session identifier redacted", "info");
   try {
-    bridge.postMessage(JSON.stringify({ type: "shift_tracker_location:start", deliveryId: deliveryId.trim() }));
+    bridge.postMessage(JSON.stringify({ type: "shift_tracker_location:start", deliveryId: deliveryId.trim(), storeProfile, shiftId }));
     return true;
   } catch {
     appendDeveloperLog("BRIDGE", "TRACKING_START_FAILED", "Native bridge rejected the tracking start command", "error");

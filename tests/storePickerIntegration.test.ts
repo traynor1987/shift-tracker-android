@@ -10,5 +10,6 @@ test('clock-in picker is locked out during a shift and resets to home after crea
 });
 test('active cover-store rendering projects safe settings and rejects stale GPS samples', () => {
  assert.match(source, /settingsForStore\(storedData.settings, currentStore\)/);
- assert.match(source, /storeId === "maghull"\) return finish\(false\)/);
+ assert.match(source, /settings.activeStoreId === "maghull" && !maghullGeofenceVerified\(settings\)/);
+ assert.match(source, /ownerShiftId/);
 });

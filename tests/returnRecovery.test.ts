@@ -3,6 +3,7 @@ import { traceReturn } from "../lib/returnDiagnostics.ts";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as domain from '../lib/domain.ts';
+import { realGeofenceDefinitionForSettings, maghullGeofenceVerified } from '../lib/storeProfiles.ts';
 import { automaticReturnCompletionAt } from '../lib/taskTiming.ts';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -128,7 +129,7 @@ test('actual GPS ingestion recovers a closed-page return from the retained nativ
   const realFence={...fence,latitude:53.56845,longitude:-2.88802};
   activity.routeEvidence={status:'partial',startedAt:activity.start,completedAt:null,points:[{...point(120,40),latitude:realFence.latitude,longitude:realFence.longitude}],recordedPointCount:1,distanceMetres:0,gaps:[],issues:[],detail:'standard',retention:'90',expiresAt:null};
   class TestDate extends Date { static now(){return t+600_000;} }
-  const context=vm.createContext({traceReturn,returnEligibility,...domain,...restore,transferredDeliveryResumePresence,Date:TestDate,data,lastCommittedDataRef:{current:data},performance,
+  const context=vm.createContext({traceReturn,returnEligibility,realGeofenceDefinitionForSettings,maghullGeofenceVerified,...domain,...restore,transferredDeliveryResumePresence,Date:TestDate,data,lastCommittedDataRef:{current:data},performance,
     nativeUnpersistedSampleIdsRef:{current:new Set()},carryoutDepartureStateRef:{current:{}},
     latestBrowserProviderFixRef:{current:null},lastOperationalSampleRef:{current:0},
     realGeofenceOwnerRef:{current:null},realGeofenceStateRef:realRef,

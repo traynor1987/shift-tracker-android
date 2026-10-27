@@ -1,5 +1,6 @@
 "use client";
-import { settingsForStore } from "../lib/storeProfiles";
+import MaghullCalibration from "./MaghullCalibration";
+import { settingsForStore, maghullGeofenceVerified, realGeofenceDefinitionForSettings, nativeStoreProfile } from "../lib/storeProfiles";
 /* Domino's is a product name used repeatedly in visible JSX copy. */
 /* eslint-disable react/no-unescaped-entities */
 
@@ -186,7 +187,6 @@ import {
   markRemainingTasksManagementBlocked,
   mergeTrafficSignals,
   normaliseDeliveryRoutePoints,
-  REAL_GEOFENCE_DEFINITION,
   recordDominosHustleExit,
   recordRealHustleExitMetrics,
   replaceShiftWithIntegrity,
@@ -344,7 +344,7 @@ import {
   setNativeWorkStatus,
   shareFileWithNativeShell,
   showNativeGeofenceAlert,
-  startNativeDeliveryTracking,
+  startNativeDeliveryTracking as startNativeDeliveryTrackingBridge,
   stopNativeDeliveryTracking,
   subscribeToNativeMessages,
   syncNativeRotaReminders,
@@ -930,6 +930,12 @@ export default function ShiftTrackerApp() {
   const data = useMemo(() => currentStore === "maghull" ? { ...storedData, settings: settingsForStore(storedData.settings, currentStore) } : storedData, [storedData, currentStore]);
   const lastCommittedDataRef = useRef(data);
   lastCommittedDataRef.current = data;
+  const startNativeDeliveryTracking = (deliveryId: string) => {
+    const latest = lastCommittedDataRef.current;
+    const shift = latest.shifts.find(item => item.status !== "completed");
+    if (!shift) return false;
+    return startNativeDeliveryTrackingBridge(deliveryId, nativeStoreProfile(latest.settings, shift.storeId ?? "ormskirk"), shift.id);
+  };
   const historicalRepairRef = useRef(createHistoricalRepair());
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState<Page>("shift");
@@ -2646,7 +2652,7 @@ export default function ShiftTrackerApp() {
       const savedEvidence = activityGeofenceEvidence(activity, "real");
       const routeEvidence = deriveGeofenceEvidenceFromRoute(
         activity,
-        REAL_GEOFENCE_DEFINITION,
+        realGeofenceDefinitionForSettings(data.settings),
       );
       const exitAt = savedEvidence.exitAt ?? routeEvidence?.exitAt ?? null;
       const entryAt = savedEvidence.entryAt ?? routeEvidence?.entryAt ?? null;
@@ -2995,7 +3001,6 @@ export default function ShiftTrackerApp() {
       };
     };
     const latestData = lastCommittedDataRef.current;
-    if (latestData.shifts.find(item => item.status !== "completed")?.storeId === "maghull") return finish(false);
     const settings = latestData.settings;
     const currentActive = latestData.shifts.find(
       (shift) => shift.status !== "completed",
@@ -3017,6 +3022,7 @@ export default function ShiftTrackerApp() {
       );
       return finish(false);
     }
+    if (!Number.isFinite(position.timestamp) || !Number.isFinite(position.coords.latitude) || !Number.isFinite(position.coords.longitude) || !Number.isFinite(position.coords.accuracy) || position.coords.accuracy <= 0 || position.timestamp < Date.parse(currentActive?.clockIn ?? "") || (deliveryActivity && position.timestamp < Date.parse(deliveryActivity.start))) return finish(false);
     const sampleTimestamp = new Date(position.timestamp).toISOString();
     // Provider health observes uncertain fixes too, before route/geofence gates.
     // This timestamp never counts as store-crossing evidence.
@@ -3109,6 +3115,11 @@ export default function ShiftTrackerApp() {
           "info",
         );
       }
+    }
+    // Route evidence is allowed before physical calibration. Automation waits.
+    if (settings.activeStoreId === "maghull" && !maghullGeofenceVerified(settings)) {
+      setLocationState({ status: "searching", presence: "unknown", accuracy: position.coords.accuracy });
+      return finish(true);
     }
     const statsGeofence = getRealStatsGeofence(settings);
     const latitude = statsGeofence.latitude;
@@ -3365,7 +3376,7 @@ export default function ShiftTrackerApp() {
       const savedEvidence = activityGeofenceEvidence(deliveryActivity, "real");
       const routeEvidence = deriveGeofenceEvidenceFromRoute(
         deliveryActivity,
-        REAL_GEOFENCE_DEFINITION,
+        realGeofenceDefinitionForSettings(settings),
       );
       const recoveredExit =
         savedEvidence.exitAt ?? routeEvidence?.exitAt ?? null;
@@ -3389,7 +3400,7 @@ export default function ShiftTrackerApp() {
     const previous = realGeofenceStateRef.current.presence;
     const result = evaluateGeofenceSample(
       realGeofenceStateRef.current,
-      REAL_GEOFENCE_DEFINITION,
+      realGeofenceDefinitionForSettings(settings),
       {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
@@ -3411,7 +3422,7 @@ export default function ShiftTrackerApp() {
         if (recordStoreReturnPresence(activity, result.state, {
           latitude: position.coords.latitude, longitude: position.coords.longitude,
           timestamp: sampleTimestamp, accuracy,
-        }, REAL_GEOFENCE_DEFINITION)) {
+        }, realGeofenceDefinitionForSettings(settings))) {
           shift.updatedAt = sampleTimestamp;
           traceReturn(activity.id, "operational_confirmation", activity.storeReturnConfirmedAt ?? undefined);
         }
@@ -3440,7 +3451,7 @@ export default function ShiftTrackerApp() {
     const routeRecoveredExit = !deliveryActivity.storeExitAt
       ? (deriveGeofenceEvidenceFromRoute(
           deliveryActivity,
-          REAL_GEOFENCE_DEFINITION,
+          realGeofenceDefinitionForSettings(settings),
         )?.exitAt ?? null)
       : null;
     const currentExitAt = deliveryActivity.storeExitAt ?? routeRecoveredExit;
@@ -3634,8 +3645,12 @@ export default function ShiftTrackerApp() {
     )
       return;
     setLocationState((current) => ({ ...current, status: "searching" }));
+    const ownerShiftId = active.id;
     locationWatchRef.current = navigator.geolocation.watchPosition(
-      applyLocationReading,
+      position => {
+        if (lastCommittedDataRef.current.shifts.find(item => item.status !== "completed")?.id !== ownerShiftId) return;
+        void applyLocationReading(position);
+      },
       (error) => {
         recordRouteIssue(error);
         setLocationState((current) => ({
@@ -3951,9 +3966,10 @@ export default function ShiftTrackerApp() {
   ) => {
     if (active) return notify("A shift is already active");
     const clockInAt = new Date();
+    const clockInSettings = settingsForStore(data.settings, data.settings.nextStoreId === "maghull" ? "maghull" : "ormskirk");
     const shift = repairShiftActivityIds(
       createShift(
-        data.settings,
+        settingsForStore(data.settings, data.settings.nextStoreId === "maghull" ? "maghull" : "ormskirk"),
         clockInAt,
         mileageMethod,
         role,
@@ -3986,13 +4002,14 @@ export default function ShiftTrackerApp() {
       draft.settings.nextStoreId = "ormskirk";
     });
     if (
-      data.settings.locationAssistEnabled &&
+      clockInSettings.locationAssistEnabled &&
       localStorage.getItem(LOCATION_EXPLAINED_KEY) === "1" &&
       "geolocation" in navigator
     ) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          const statsGeofence = getRealStatsGeofence(data.settings);
+          if (lastCommittedDataRef.current.shifts.find(item => item.status !== "completed")?.id !== shift.id) return;
+          const statsGeofence = getRealStatsGeofence(clockInSettings);
           const distance = distanceMetres(
             position.coords.latitude,
             position.coords.longitude,
@@ -4010,7 +4027,7 @@ export default function ShiftTrackerApp() {
               position.timestamp || Date.now(),
             ),
           );
-          const dominosGeofence = getDominosReferenceGeofence(data.settings);
+          const dominosGeofence = getDominosReferenceGeofence(clockInSettings);
           const dominosDistance = distanceMetres(
             position.coords.latitude,
             position.coords.longitude,
@@ -4641,7 +4658,7 @@ export default function ShiftTrackerApp() {
     const pendingEarlyDispatch =
       active.pendingEarlyDispatch ?? active.queuedEarlyDispatch ?? null;
     const locationAssistEnabledForRun =
-      data.settings.locationAssistEnabled || Boolean(pendingEarlyDispatch);
+      data.settings.locationAssistEnabled || (active.storeId !== "maghull" && Boolean(pendingEarlyDispatch));
     const statsGeofence = getRealStatsGeofence(data.settings);
     const dominosGeofence = getDominosReferenceGeofence(data.settings);
     const storeProofCentre = getStoreDisplayLocation(data.settings);
@@ -4805,7 +4822,7 @@ export default function ShiftTrackerApp() {
     setRealGeofenceEvaluatorState(initialGeofenceEvaluatorState());
     // Single/Double is pressed at the store. Seed an inside baseline immediately
     // so a fast departure is still recognised even before the first GPS sample.
-    if (locationAssistEnabledForRun) {
+    if (locationAssistEnabledForRun && active.storeId !== "maghull") {
       realGeofenceOwnerRef.current = activityId;
       setRealGeofenceEvaluatorState(
         initialGeofenceEvaluatorState("inside", tapTime),
@@ -7326,6 +7343,10 @@ export default function ShiftTrackerApp() {
       }
     }
     const nativeAction = readNativeActionRequest(event);
+    if (nativeAction?.id.startsWith("native-return-") && active?.storeId === "maghull" && nativeShellInfo?.diagnostics?.storeProfiles !== true) {
+      respondNativeAction(nativeAction.id, "invalid_action");
+      return;
+    }
     if (nativeAction) {
       const stateRevision = active
         ? `${active.updatedAt ?? active.clockIn}|${active.status}`
@@ -8046,6 +8067,7 @@ export default function ShiftTrackerApp() {
       // stale tap, while this PWA remains the only state machine.
       stateRevision: `${active.updatedAt ?? active.clockIn}|${active.status}`,
       shiftId: active.id,
+      storeProfile: nativeStoreProfile(data.settings, active.storeId ?? "ormskirk"),
       activityId,
       shiftActive: true,
       shiftStartedAtEpochMs: Date.parse(active.clockIn),
@@ -8103,7 +8125,7 @@ export default function ShiftTrackerApp() {
         : "unknown",
       allowedActions,
       settings: {
-        alwaysOnShiftMonitoring: data.settings.alwaysOnShiftMonitoring === true,
+        alwaysOnShiftMonitoring: data.settings.alwaysOnShiftMonitoring === true && (active.storeId !== "maghull" || nativeShellInfo?.diagnostics?.storeProfiles === true),
         shiftMonitoringHighAccuracy: data.settings.shiftMonitoringHighAccuracy === true,
         liveNotification: data.settings.androidLiveShiftNotification !== false,
         notificationActions: data.settings.androidNotificationActions !== false,
@@ -8119,6 +8141,8 @@ export default function ShiftTrackerApp() {
   }, [
     active,
     data.settings.alwaysOnShiftMonitoring,
+    data.settings.maghullGeofence,
+    nativeShellInfo?.diagnostics?.storeProfiles,
     data.settings.shiftMonitoringHighAccuracy,
     data.settings.androidBreakReminders,
     data.settings.androidLiveShiftNotification,
@@ -8728,7 +8752,7 @@ export default function ShiftTrackerApp() {
               <option value="ormskirk">Ormskirk · Home Store</option>
               <option value="maghull">Maghull · Cover Store</option>
             </select>
-          </label> : <p className="eyebrow" role="status">{active.storeId === "maghull" ? "Maghull · GPS calibration pending · automatic GPS actions off" : "Ormskirk · Home Store"}</p>}
+          </label> : <p className="eyebrow" role="status">{active.storeId === "maghull" ? `${maghullGeofenceVerified(data.settings) ? "Maghull · physical boundary verified" : "Maghull · route GPS only · calibration needed"}${isNativeShell && nativeShellInfo?.diagnostics?.storeProfiles !== true ? " · update Android for store monitoring" : ""}` : "Ormskirk · Home Store"}</p>}
           <ActiveShift
             data={data}
             shift={active}
@@ -21525,6 +21549,16 @@ function SettingsPage({
     update("firstTaskPromptTaskIds", next.length === allIds.length ? [] : next);
   };
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    if (settings.activeStoreId === "maghull") {
+      if (key === "dominosReferenceRadiusMetres") {
+        commit(draft => { draft.settings.maghullDominosReferenceRadiusMetres = Number(value); });
+        return;
+      }
+      if (["storeLatitude", "storeLongitude", "storeRadiusMetres", "storeDisplayLatitude", "storeDisplayLongitude", "storeDisplayLabel", "locationAssistEnabled", "carryoutDepartureZone", "carryoutDepartureAssistEnabled", "storePresenceProofEnabled", "storePresenceStartProofEnabled"].includes(key)) {
+        window.alert("Maghull uses its own physically verified boundary. Finish the shift to adjust calibration.");
+        return;
+      }
+    }
     if (
       key === "geofenceSoundEnabled" &&
       value === true &&
@@ -22843,6 +22877,10 @@ function SettingsPage({
       )}
       {settingsSection === "location-geofence" && (
         <>
+          <MaghullCalibration settings={settings} disabled={Boolean(data.shifts.find(item => item.status !== "completed"))} capture={onCaptureCarryoutCorner} onSave={zone => commit(draft => {
+            if (draft.shifts.some(item => item.status !== "completed")) return false;
+            draft.settings.maghullGeofence = zone;
+          })} renderMap={zone => <GeofenceMapPreview latitude={zone.latitude} longitude={zone.longitude} radius={zone.radius} dominosRadius={75} displayLatitude={53.516605} displayLongitude={-2.943185} displayLabel="Domino's Maghull · building pin (car park unconfirmed)" />} />
           <GeofenceMapPreview
             latitude={statsGeofence.latitude}
             longitude={statsGeofence.longitude}
@@ -29299,7 +29337,7 @@ function FixedGeofenceMap({
       <div className="settings-geofence-boundaries">
         <span>
           <b>REAL HUSTLE GEOFENCE</b>
-          <strong>35 m</strong>
+          <strong>{Math.round(radius)} m</strong>
           <small>Protected operational/statistical boundary</small>
         </span>
         <span>
@@ -31577,10 +31615,10 @@ function NativeUpdateStatusCards({
           "The Android app could not start the watch update. Your installed apps are unchanged.",
       });
   };
-  const checkAndroidUpdate = () => {
+  const checkAndroidUpdate = (channel: "stable" | "candidate" = "stable") => {
     setCheckModal("android");
     setStatus((current) => ({ ...(current ?? {}), state: "checking" }));
-    if (!requestNativeApkUpdate("check"))
+    if (!requestNativeApkUpdate("check", true, channel))
       setStatus({
         state: "failed",
         message:
@@ -31651,10 +31689,18 @@ function NativeUpdateStatusCards({
             <button
               type="button"
               className="android-update-check"
-              onClick={checkAndroidUpdate}
+              onClick={() => checkAndroidUpdate()}
             >
               {state === "checking" ? "CHECKING GITHUB…" : "CHECK FOR UPDATES"}
             </button>
+            <details className="android-update-help">
+              <summary>Test release updates</summary>
+              <p>First install from an older APK: <a href="https://github.com/traynor1987/shift-tracker-android/releases/download/v2.2.75-rc.1/Shift-Tracker-2.2.75.apk" target="_blank" rel="noopener noreferrer">Download signed GPS profile update 2.2.75</a>. This opens GitHub for the one-time download; Android asks you to install it. Afterward, signed test-release checks work here. Physical Maghull GPS acceptance is still pending.</p>
+              <p>Optional candidate builds have passed automated release checks but still require physical device acceptance.</p>
+              <button type="button" className="android-update-check" onClick={() => {
+                if (window.confirm("Check for a signed test release? Physical GPS acceptance may still be pending. Your data stays in place.")) checkAndroidUpdate("candidate");
+              }}>CHECK SIGNED TEST RELEASE</button>
+            </details>
             <small className="android-update-help">
               Android updates are separate from web refreshes and are verified
               before Android opens its normal installation screen.

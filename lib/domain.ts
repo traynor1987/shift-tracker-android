@@ -611,6 +611,16 @@ export interface Settings {
   legacyView?: boolean;
   deliveryDays?: number[];
   locationAssistEnabled?: boolean;
+  /** Runtime projection only: never changes the saved home calibration. */
+  activeStoreId?: StoreId;
+  maghullDominosReferenceRadiusMetres?: number;
+  maghullGeofence?: {
+    latitude: number; longitude: number; radius: number;
+    insideProof?: { latitude: number; longitude: number; accuracy: number; capturedAt: string };
+    carParkProof?: { latitude: number; longitude: number; accuracy: number; capturedAt: string };
+    outsideProof?: { latitude: number; longitude: number; accuracy: number; capturedAt: string };
+    verifiedAt?: string;
+  };
   storeLatitude?: number;
   storeLongitude?: number;
   storeRadiusMetres?: number;
@@ -1059,7 +1069,10 @@ export const emptyData = (): AppData => ({ version: 1, settings: { ...DEFAULT_SE
 export const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
 export function getRealStatsGeofence(settings: Settings) {
-  void settings;
+  if (settings.activeStoreId === "maghull") {
+    const zone = settings.maghullGeofence;
+    return { latitude: zone?.latitude ?? 53.516605, longitude: zone?.longitude ?? -2.943185, radius: zone?.radius ?? 0 };
+  }
   return {
     latitude: REAL_STATS_GEOFENCE.latitude,
     longitude: REAL_STATS_GEOFENCE.longitude,
@@ -1068,7 +1081,11 @@ export function getRealStatsGeofence(settings: Settings) {
 }
 
 export function getDominosReferenceGeofence(settings: Settings) {
-  const configuredRadius = Number(settings.dominosReferenceRadiusMetres);
+  const configuredRadius = Number(settings.activeStoreId === "maghull" ? settings.maghullDominosReferenceRadiusMetres ?? 75 : settings.dominosReferenceRadiusMetres);
+  if (settings.activeStoreId === "maghull") {
+    const zone = getRealStatsGeofence(settings);
+    return { latitude: zone.latitude, longitude: zone.longitude, radius: Number.isFinite(configuredRadius) ? Math.min(150, Math.max(40, Math.round(configuredRadius))) : 75 };
+  }
   return {
     latitude: DOMINOS_REFERENCE_GEOFENCE.latitude,
     longitude: DOMINOS_REFERENCE_GEOFENCE.longitude,
