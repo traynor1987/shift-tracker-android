@@ -1,0 +1,7 @@
+# Web 2.1.240 — Shift Actions spacing
+
+Current remote source recovered: 225f7cfce618c392f514dea5bda0933daa32ec25 / Sites 488. Closed Shift Actions now follows Hustle Timing in normal layout instead of being fixed above navigation. Expanded/dragged drawer keeps the existing anchored controls and handlers. Tall viewports (900px+) increase task/elapsed and Hustle typography. All CSS is scoped to familiar-shift; Legacy styling and canonical logic are untouched.
+
+Validation: strict TypeScript, production build and artifact validation passed. Europe/London tests: 26 MJS + 579 TS passed, zero failed. ESLint zero errors, 36 existing warnings. Final CSS-only margin correction rebuilt and checked in the real browser.
+
+Rendered browser: native CSS simulation at 360×800 with 125% text, 24px system reserves and 72px bottom navigation: Hustle ends 657.09px, closed Shift Actions starts 659.09px and ends 703.09px; navigation starts 704px. Scroll size 360×800. Enter opens break/clock-out controls; Enter closes them. Expanded drawer ends above navigation at 704px. Wide 768×960 and 960×768 layouts fit; landscape Shift Actions ends 495.73px against navigation at 672px. Legacy retains legacy-view class. At 384×824 standard text, action gap is 2px, action bottom 644.64px, navigation top 728px, no scroll overflow. Screenshot captured from final rendered source. Native device/GPS acceptance not tested in this release.

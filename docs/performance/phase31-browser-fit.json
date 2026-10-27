@@ -1,0 +1,551 @@
+{
+  "environment": "Cloud Chrome; production React root and built CSS in same-origin iframe; synthetic canonical records, 24px reserved top/bottom insets, 125% text=20px root",
+  "measurements": [
+    {
+      "actions": {
+        "bottom": 268.1875,
+        "height": 74.1875,
+        "top": 194,
+        "width": 340
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 574.859375,
+        "height": 478.859375,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 445.96875,
+        "height": 40,
+        "top": 405.96875,
+        "width": 340
+      },
+      "text": "16px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 store100",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 278.59375,
+        "height": 82,
+        "top": 196.59375,
+        "width": 340
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 628.09375,
+        "height": 532.09375,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 468.59375,
+        "height": 40,
+        "top": 428.59375,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 store125",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 298.09375,
+        "height": 82,
+        "top": 216.09375,
+        "width": 340
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 647.59375,
+        "height": 551.59375,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 488.09375,
+        "height": 40,
+        "top": 448.09375,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 task125",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 276,
+        "height": 82,
+        "top": 194,
+        "width": 340
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 625.5,
+        "height": 529.5,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 466,
+        "height": 40,
+        "top": 426,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 break125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 413.6875,
+        "height": 58,
+        "top": 355.6875,
+        "width": 340
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 625.6875,
+        "height": 529.6875,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 549.6875,
+        "height": 40,
+        "top": 509.6875,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 single125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 413.6875,
+        "height": 58,
+        "top": 355.6875,
+        "width": 340
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 625.6875,
+        "height": 529.6875,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 549.6875,
+        "height": 40,
+        "top": 509.6875,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 double125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 435.6875,
+        "height": 80,
+        "top": 355.6875,
+        "width": 340
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 360
+      },
+      "nav": {
+        "bottom": 776,
+        "height": 72,
+        "top": 704,
+        "width": 352
+      },
+      "page": {
+        "bottom": 647.6875,
+        "height": 551.6875,
+        "top": 96,
+        "width": 340
+      },
+      "scrollHeight": 800,
+      "scrollWidth": 360,
+      "status": {
+        "bottom": 571.6875,
+        "height": 40,
+        "top": 531.6875,
+        "width": 340
+      },
+      "text": "20px",
+      "viewport": [
+        360,
+        800
+      ],
+      "name": "Folded 360 × 800 return125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 380.09375,
+        "height": 58,
+        "top": 322.09375,
+        "width": 364
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 384
+      },
+      "nav": {
+        "bottom": 800,
+        "height": 72,
+        "top": 728,
+        "width": 376
+      },
+      "page": {
+        "bottom": 592.09375,
+        "height": 496.09375,
+        "top": 96,
+        "width": 364
+      },
+      "scrollHeight": 824,
+      "scrollWidth": 384,
+      "status": {
+        "bottom": 516.09375,
+        "height": 40,
+        "top": 476.09375,
+        "width": 364
+      },
+      "text": "20px",
+      "viewport": [
+        384,
+        824
+      ],
+      "name": "Folded 384 × 824 return125",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 278.59375,
+        "height": 82,
+        "top": 196.59375,
+        "width": 364
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 384
+      },
+      "nav": {
+        "bottom": 800,
+        "height": 72,
+        "top": 728,
+        "width": 376
+      },
+      "page": {
+        "bottom": 602.59375,
+        "height": 506.59375,
+        "top": 96,
+        "width": 364
+      },
+      "scrollHeight": 824,
+      "scrollWidth": 384,
+      "status": {
+        "bottom": 468.59375,
+        "height": 40,
+        "top": 428.59375,
+        "width": 364
+      },
+      "text": "20px",
+      "viewport": [
+        384,
+        824
+      ],
+      "name": "Folded 384 × 824 store125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 400.78125,
+        "height": 58,
+        "top": 342.78125,
+        "width": 748
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 768
+      },
+      "nav": {
+        "bottom": 936,
+        "height": 72,
+        "top": 864,
+        "width": 720
+      },
+      "page": {
+        "bottom": 594.78125,
+        "height": 498.78125,
+        "top": 96,
+        "width": 748
+      },
+      "scrollHeight": 960,
+      "scrollWidth": 768,
+      "status": {
+        "bottom": 518.78125,
+        "height": 40,
+        "top": 478.78125,
+        "width": 748
+      },
+      "text": "20px",
+      "viewport": [
+        768,
+        960
+      ],
+      "name": "Unfolded portrait return125",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 276,
+        "height": 82,
+        "top": 194,
+        "width": 748
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 768
+      },
+      "nav": {
+        "bottom": 936,
+        "height": 72,
+        "top": 864,
+        "width": 720
+      },
+      "page": {
+        "bottom": 582,
+        "height": 486,
+        "top": 96,
+        "width": 748
+      },
+      "scrollHeight": 960,
+      "scrollWidth": 768,
+      "status": {
+        "bottom": 448,
+        "height": 40,
+        "top": 408,
+        "width": 748
+      },
+      "text": "20px",
+      "viewport": [
+        768,
+        960
+      ],
+      "name": "Unfolded portrait store125",
+      "fit": true
+    },
+    {
+      "actions": null,
+      "delivered": {
+        "bottom": 400.78125,
+        "height": 58,
+        "top": 342.78125,
+        "width": 900
+      },
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 960
+      },
+      "nav": {
+        "bottom": 744,
+        "height": 72,
+        "top": 672,
+        "width": 720
+      },
+      "page": {
+        "bottom": 594.78125,
+        "height": 498.78125,
+        "top": 96,
+        "width": 900
+      },
+      "scrollHeight": 768,
+      "scrollWidth": 960,
+      "status": {
+        "bottom": 518.78125,
+        "height": 40,
+        "top": 478.78125,
+        "width": 900
+      },
+      "text": "20px",
+      "viewport": [
+        960,
+        768
+      ],
+      "name": "Unfolded landscape return125",
+      "fit": true
+    },
+    {
+      "actions": {
+        "bottom": 276,
+        "height": 82,
+        "top": 194,
+        "width": 900
+      },
+      "delivered": null,
+      "header": {
+        "bottom": 88,
+        "height": 88,
+        "top": 0,
+        "width": 960
+      },
+      "nav": {
+        "bottom": 744,
+        "height": 72,
+        "top": 672,
+        "width": 720
+      },
+      "page": {
+        "bottom": 582,
+        "height": 486,
+        "top": 96,
+        "width": 900
+      },
+      "scrollHeight": 768,
+      "scrollWidth": 960,
+      "status": {
+        "bottom": 448,
+        "height": 40,
+        "top": 408,
+        "width": 900
+      },
+      "text": "20px",
+      "viewport": [
+        960,
+        768
+      ],
+      "name": "Unfolded landscape store125",
+      "fit": true
+    }
+  ]
+}

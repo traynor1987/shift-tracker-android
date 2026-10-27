@@ -1,0 +1,24 @@
+{
+  "node": "v24.19.0",
+  "rapidResume": {
+    "cycles": 50,
+    "baselineRootStateUpdates": 200,
+    "postRootNotifications": 50,
+    "postLiveNotifications": 50,
+    "clockSchedules": 51,
+    "clockCancellations": 50,
+    "canonicalWallTime": 3000000,
+    "expectedWallTime": 3000000
+  },
+  "navigation": {
+    "swaps": 200,
+    "baselineRootStateUpdates": 200,
+    "postRootNotifications": 13
+  },
+  "monitorMountUnmount": {
+    "cycles": 100,
+    "scheduled": 100,
+    "remainingEventListeners": 0
+  },
+  "scope": "Executed Phase1 root timer effect vs production Phase2 wall-clock/monitor engines. Controlled notification/lifecycle simulation, not full React rendering, real tab navigation, phone lock or device resume."
+}

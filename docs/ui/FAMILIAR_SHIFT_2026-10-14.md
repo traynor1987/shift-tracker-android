@@ -1,0 +1,11 @@
+# Familiar Shift presentation — Web 2.1.239
+
+Continued from eaa5adf808dfc9e5e1b06e6d08474c22cd31f59e (Sites 487).
+
+The default live Shift screen now uses the existing familiar components, with a prominent header elapsed clock, separate wages and delivery reimbursement, compact controls and direct Early Dispatch access. The duplicate overview and task timer are removed. GPS/cloud detail remains available through the health button; operational return and missing exact evidence remain distinct. Other redesigned tabs are retained. Legacy View remains off by default and preserves the original global stylesheet and presentation. Both modes use the same canonical state and handlers.
+
+Validation: strict TypeScript passed; production build and artifact validation passed; ESLint 0 errors, 36 existing warnings. Complete Europe/London suites: 26 MJS + 579 TS tests passed, 0 failed. The first run caught a source assertion for the intentionally changed excluded-run presentation; updated assertion and all TS tests rerun successfully. Three new rendered-component tests cover familiar layout, duplicate task removal and excluded-run dispatch presentation in both modes. Read-only code review found no blockers.
+
+Real rendered browser checks: 360×800 folded, 768×960 portrait unfolded, 960×768 landscape unfolded. At 125% text, with 24px top and bottom reserves and 72px navigation, folded page bottoms were 637.91px (native idle CSS), 657.09px (native task CSS), 695.11px (native Single CSS), 700.11px (Double), 700.11px (Returning); navigation begins 704px. Each had 800px scroll height and 360px width. The task screen also clears the closed Shift Actions drawer at 660px. Unfolded return-state pages fit vertically and horizontally. Native CSS is simulated, not a physical WebView test. Keyboard Space enabled Legacy during an active delivery; reload preserved it and the delivery; switching off restored the familiar view with the active timer retained. Physical device acceptance: NOT TESTED.
+
+Main JS decreased from 920,559 to 917,835 bytes; initial JS from 1,191,971 to 1,189,247 bytes. Maps/reports remain lazy. Scoped CSS adds approximately 8KB uncompressed. No native source or APK change. GPS, delivery, task, money and persistence calculations are unchanged.

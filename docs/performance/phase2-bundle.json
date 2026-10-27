@@ -1,0 +1,74 @@
+{
+  "environment": "Linux host, Node v24.19.0; production Vinext/Vite build. Fresh generated dist; per-file gzip measured locally.",
+  "before": {
+    "main": {
+      "file": "assets/ShiftTrackerApp-OO7et4Zc.js",
+      "bytes": 972041,
+      "gzip": 248290
+    },
+    "initial": {
+      "files": [
+        "assets/ShiftTrackerApp-OO7et4Zc.js",
+        "assets/rolldown-runtime-hePW80VL.js",
+        "assets/framework-DLkis2XS.js",
+        "assets/index-BjeCD5Aj.js"
+      ],
+      "bytes": 1243440,
+      "gzip": 332118
+    },
+    "lazy": {
+      "files": [
+        "assets/leaflet-src-D6yJ2DYL.js",
+        "assets/layout-segment-context-BkPUu0I2.js",
+        "assets/script-Tq3N2sA3.js"
+      ],
+      "bytes": 151834,
+      "gzip": 44509
+    },
+    "css": {
+      "file": "assets/index-BanNEw6F.css",
+      "bytes": 542445,
+      "gzip": 76716
+    }
+  },
+  "after": {
+    "css": {
+      "files": [
+        "assets/index-hZJi-0IH.css"
+      ],
+      "bytes": 542472,
+      "gzip": 76729
+    },
+    "main": {
+      "file": "assets/ShiftTrackerApp-CEdHfA1Y.js",
+      "bytes": 903631,
+      "gzip": 231363
+    },
+    "initial": {
+      "files": [
+        "assets/ShiftTrackerApp-CEdHfA1Y.js",
+        "assets/rolldown-runtime-hePW80VL.js",
+        "assets/framework-DLkis2XS.js",
+        "assets/index-BE_TI9nF.js"
+      ],
+      "bytes": 1175043,
+      "gzip": 315200
+    },
+    "lazy": {
+      "files": [
+        "assets/layout-segment-context-DIqKoPA1.js",
+        "assets/script-Tq3N2sA3.js",
+        "assets/pdfReports-BP5WF93w.js",
+        "assets/RouteMapModal-mv5QedbJ.js",
+        "assets/leaflet-src-D6yJ2DYL.js"
+      ],
+      "bytes": 231228,
+      "gzip": 67678
+    }
+  },
+  "reductionPercent": {
+    "main": 7.04,
+    "initial": 5.5
+  },
+  "scope": "Static initial JavaScript dependency closure. Lazy maps/reports execute on demand. All assets are pre-cached for offline use, so this does not claim reduced full-shell install transfer. CSS uses current RSC shell references; fonts and actual browser load/frame timings excluded."
+}

@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {proShiftHustle} from '../lib/proShiftHustle.ts';import type {ActivityRecord} from '../lib/domain.ts';
+const d:ActivityRecord={id:'synthetic',shiftId:'shift',type:'single_delivery',start:'2026-10-15T10:00:00Z',end:null,storeExitAt:'2026-10-15T10:01:00Z',storeExitObserved:true};
+test('Pro idle has no duplicated shift elapsed timer',()=>assert.deepEqual(proShiftHustle(null,new Date()),{value:'—',detail:'No active run'}));
+test('live Real display uses observed exit and explicitly awaits entry without mutating evidence',()=>{const copy=structuredClone(d);assert.deepEqual(proShiftHustle(d,new Date('2026-10-15T10:03:00Z')),{value:'2m',detail:'Live · entry pending'});assert.deepEqual(d,copy);});
+test('exact gap never displays operational confirmation as measured Real crossing',()=>assert.equal(proShiftHustle({...d,storeEntryUnobserved:true},new Date()).value,'—'));
+test('observed return freezes Real display at existing domain timing',()=>{const completed={...d,storeEntryObserved:true,storeEntryAt:'2026-10-15T10:04:00Z'};assert.equal(proShiftHustle(completed,new Date('2026-10-15T10:05:00Z')).value,proShiftHustle(completed,new Date('2026-10-15T10:15:00Z')).value);});
+test('malformed pre-start exit never produces a provisional Real timer',()=>assert.equal(proShiftHustle({...d,storeExitAt:'2026-10-15T09:59:00Z'},new Date('2026-10-15T10:05:00Z')).value,'—'));

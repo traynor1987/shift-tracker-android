@@ -4,110 +4,27 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Requested only after foreground location has been granted, never in the same dialog. -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Android still owns the final update confirmation. This permission only
-         lets the user grant Shift Tracker permission to open that system flow. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="uk.co.james.permission.SHIFT_TRACKER_WORK_CONTEXT" />
 
     <application
         android:allowBackup="false"
-        android:icon="@mipmap/shift_tracker_launcher"
-        android:label="${appLabel}"
-        android:roundIcon="@mipmap/shift_tracker_launcher"
+        android:label="Shift Tracker"
         android:supportsRtl="true"
         android:theme="@style/Theme.ShiftTracker"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <service
             android:name=".DeliveryLocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
-        <service
-            android:name=".DispatchNotificationListenerService"
-            android:exported="true"
-            android:label="Shift Tracker dispatch detection"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-        <receiver android:name=".RotaReminderReceiver" android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-        <receiver android:name=".NativeActionReceiver" android:exported="false" />
-        <receiver android:name=".JamesOsReconcileReceiver" android:exported="true" android:permission="uk.co.james.permission.SHIFT_TRACKER_WORK_CONTEXT">
-            <intent-filter><action android:name="uk.co.james.action.SHIFT_TRACKER_RECONCILE" /></intent-filter>
-        </receiver>
-        <receiver android:name=".ShiftReminderReceiver" android:exported="false" />
-        <receiver android:name=".CompactShiftWidget" android:exported="false">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_shift_compact_info" />
-        </receiver>
-        <receiver android:name=".SmallShiftWidget" android:exported="false">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_shift_small_info" />
-        </receiver>
-        <receiver android:name=".MediumShiftWidget" android:exported="false">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_shift_medium_info" />
-        </receiver>
-        <receiver android:name=".LargeShiftWidget" android:exported="false">
-            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_shift_large_info" />
-        </receiver>
-        <service
-            android:name=".ShiftTrackerTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_stat_shift_tracker"
-            android:label="Shift Tracker"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
-        </service>
-        <service
-            android:name=".PhoneWearListenerService"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-                <data android:scheme="wear" android:host="*" android:pathPrefix="/shift-tracker/" />
-            </intent-filter>
-        </service>
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-        <service android:name=".PhoneWearSettingsListenerService" android:exported="true">
-            <intent-filter>
-                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
-                <data android:scheme="wear" android:host="*" android:path="/shift-tracker/wear-settings/watch" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-                <data android:scheme="wear" android:host="*" android:path="/shift-tracker/wear-settings-request" />
-            </intent-filter>
-        </service>
     </application>
 </manifest>

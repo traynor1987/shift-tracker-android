@@ -1,0 +1,34 @@
+{
+  "rows": [
+    {
+      "scenario": "normal",
+      "shifts": 40,
+      "runs": 320,
+      "iterations": 60,
+      "weeklyBaselineMs": 31.828,
+      "weeklyValueCacheMs": 12.253,
+      "periodsBaselineMs": 47.128,
+      "periodsMemoGenerationMs": 0.728
+    },
+    {
+      "scenario": "long-history",
+      "shifts": 500,
+      "runs": 10000,
+      "iterations": 60,
+      "weeklyBaselineMs": 739.957,
+      "weeklyValueCacheMs": 256.912,
+      "periodsBaselineMs": 924.744,
+      "periodsMemoGenerationMs": 14.149
+    }
+  ],
+  "clock60s": {
+    "baselineRootUpdates": 60,
+    "postRootNotifications": 4,
+    "liveScreenNotifications": 60
+  },
+  "limitations": [
+    "Calculation microbenchmark and production clock notification counts; not browser frame, React commit or memory measurements.",
+    "Value-keyed cache still scans completed timing fields to validate mutable edits.",
+    "Live screen boundaries still render each second."
+  ]
+}

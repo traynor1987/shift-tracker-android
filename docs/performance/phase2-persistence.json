@@ -1,0 +1,117 @@
+{
+  "method": "Same Node process version and fake-indexeddb package in this checkout; fresh database per case, one warmup save then five append-one-point saves. recovery=false isolates ordinary write path; timings include queue snapshot, validation, IndexedDB clones, comparisons, transaction and revision verification. Component costs are separate single direct operation measurements, not subtracted from totals. Synthetic timings do not represent a device guarantee. Baseline captured before optimization; after captured with identical script. All workload shifts are artificial working shifts populated with synthetic routes; the large-history name denotes record volume, not realistic completed shift history.",
+  "before": {
+    "node": "v24.19.0",
+    "at": "2026-10-13T21:39:01.558Z",
+    "results": [
+      {
+        "name": "normal",
+        "shifts": 10,
+        "points": 100,
+        "samplesMs": [
+          12.225465000000014,
+          8.774562000000003,
+          10.320281999999992,
+          9.662229999999994,
+          9.737023000000022
+        ],
+        "meanMs": 10.143912400000005,
+        "cloneMs": 1.074830999999989,
+        "serializationMs": 0.9469179999999824,
+        "validationMs": 1.050454000000002,
+        "comparisonMs": 1.5473029999999994
+      },
+      {
+        "name": "long-route",
+        "shifts": 10,
+        "points": 5000,
+        "samplesMs": [
+          258.985994,
+          246.94160199999988,
+          244.85970300000008,
+          258.91531800000007,
+          241.47662100000002
+        ],
+        "meanMs": 250.23584760000003,
+        "cloneMs": 37.73860200000013,
+        "serializationMs": 23.318164999999908,
+        "validationMs": 10.773927000000185,
+        "comparisonMs": 42.01364899999999
+      },
+      {
+        "name": "large-history",
+        "shifts": 150,
+        "points": 500,
+        "samplesMs": [
+          400.2193299999999,
+          413.5129079999997,
+          404.2181599999999,
+          400.14686600000005,
+          437.0519909999998
+        ],
+        "meanMs": 411.0298509999999,
+        "cloneMs": 56.15074900000036,
+        "serializationMs": 43.48465899999974,
+        "validationMs": 24.883646999999655,
+        "comparisonMs": 80.9469140000001
+      }
+    ]
+  },
+  "after": {
+    "node": "v24.19.0",
+    "at": "2026-10-13T21:39:38.250Z",
+    "results": [
+      {
+        "name": "normal",
+        "shifts": 10,
+        "points": 100,
+        "samplesMs": [
+          10.942881,
+          6.668144999999981,
+          6.764098999999987,
+          7.420800000000014,
+          6.89417499999999
+        ],
+        "meanMs": 7.738019999999994,
+        "cloneMs": 1.3488640000000203,
+        "serializationMs": 0.8832819999999799,
+        "validationMs": 1.154701000000017,
+        "comparisonMs": 1.8975209999999834
+      },
+      {
+        "name": "long-route",
+        "shifts": 10,
+        "points": 5000,
+        "samplesMs": [
+          186.08480699999996,
+          194.23018100000002,
+          171.508017,
+          155.50648799999988,
+          172.982211
+        ],
+        "meanMs": 176.06234079999996,
+        "cloneMs": 34.67942199999993,
+        "serializationMs": 24.80426199999988,
+        "validationMs": 11.892092000000048,
+        "comparisonMs": 43.41158999999993
+      },
+      {
+        "name": "large-history",
+        "shifts": 150,
+        "points": 500,
+        "samplesMs": [
+          320.2857510000001,
+          291.8107120000002,
+          292.68252699999994,
+          275.6074700000004,
+          278.6311690000002
+        ],
+        "meanMs": 291.80352580000016,
+        "cloneMs": 63.06422399999974,
+        "serializationMs": 44.397657999999865,
+        "validationMs": 18.492083999999977,
+        "comparisonMs": 84.60182099999975
+      }
+    ]
+  }
+}

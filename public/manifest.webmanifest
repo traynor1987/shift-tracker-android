@@ -1,0 +1,21 @@
+{
+  "name": "Shift Tracker",
+  "short_name": "Shift Tracker",
+  "description": "Local shift, delivery, mileage, wage and fuel reimbursement tracker.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#11100f",
+  "theme_color": "#1677d2",
+  "categories": ["productivity", "finance", "utilities"],
+  "icons": [
+    { "src": "/icons/shift-clock-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/shift-clock-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/shift-clock-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/shift-clock-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "prefer_related_applications": false
+}

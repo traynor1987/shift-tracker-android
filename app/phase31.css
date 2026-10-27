@@ -1,0 +1,93 @@
+/* Compact operational presentation only. Legacy retains original DOM/styles. */
+.phase31-shift-clock[hidden],.phase31-wages[hidden],.phase31-reimbursement[hidden]{display:none!important}
+.phase3-view .phase31-shift-clock{display:grid;text-align:right;gap:2px;margin-left:auto;font-variant-numeric:tabular-nums}
+.phase3-view .phase31-shift-clock small{font-size:.65rem;font-weight:800}
+.phase3-view .phase31-shift-clock strong{font-size:clamp(1.35rem,5vw,1.9rem);line-height:1.1}
+.phase3-view.active-main .topbar{gap:8px;height:calc(64px + var(--app-safe-top));padding:calc(8px + var(--app-safe-top)) 12px 8px}
+.phase3-view.active-main .brand-copy small,.phase3-view.active-main .topbar-actions{display:none}
+.phase3-view.active-main .brand-copy strong{font-size:.95rem}
+.phase3-view.active-main .brand-mark{width:30px;height:30px}
+.app-shell.phase3-view.active-main{height:auto;min-height:100svh;padding-bottom:calc(86px + env(safe-area-inset-bottom))}
+.app-shell.phase3-view.active-main .main-content{margin:8px auto 0;padding:0;width:min(100% - 20px,1180px)}
+.app-shell.phase3-view .active-shift-page{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-content:start;align-items:start}
+.app-shell.phase3-view .working-card{display:contents}
+.app-shell.phase3-view .working-head{grid-column:1;grid-row:1;display:block;padding:12px;border-radius:16px;background:var(--single-delivery);color:#fff;min-height:96px}
+.phase3-view .working-head .time-label,.phase3-view .working-head .live-wage{display:none}
+.app-shell.phase3-view .working-head h1{font-size:clamp(1.5rem,7vw,2.4rem);line-height:1.15;margin:4px 0;font-variant-numeric:tabular-nums}
+.phase3-view .working-head .eyebrow{font-size:.65rem;margin:0}
+.phase3-view .working-head .current-activity-name{font-size:.75rem;overflow-wrap:anywhere}
+.phase3-view .phase3-live-overview{grid-column:2;grid-row:1;display:block;padding:12px;border:0;border-radius:16px;background:var(--surface);color:var(--ink);min-height:96px;order:initial}
+.phase3-view .phase3-live-state,.phase3-view .phase3-next-action,.phase3-view .phase3-earnings,.phase3-view .phase3-live-trust{display:none}
+.phase3-view .phase3-hustle-metric{padding:0;text-align:left}
+.phase3-view .phase3-hustle-metric strong{font-size:clamp(1.5rem,7vw,2.4rem);line-height:1.15;margin-top:4px}
+.phase3-view .phase3-hustle-metric strong.is-unavailable{font-size:.9rem;line-height:1.3;letter-spacing:0}
+.phase3-view .phase3-hustle-metric p{font-size:.65rem;line-height:1.3;margin-top:4px}
+.app-shell.phase3-view .delivery-panel{grid-column:1/-1;grid-row:2;padding:0;gap:6px}
+.phase3-view .delivery-panel>.section-title{display:none}
+.app-shell.phase3-view .delivery-buttons button,.app-shell.phase3-view.native-shell.active-main .delivery-buttons button{min-height:64px;padding:10px;height:auto}
+.app-shell.phase3-view .delivery-buttons button span{font-size:1.3rem}
+.phase3-view .run-strip{padding:6px;font-size:.7rem;min-height:0}
+.app-shell.phase3-view .live-stats{grid-column:1/-1;grid-row:3;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:0;padding:8px;background:var(--surface);color:var(--ink);border-radius:14px}
+.phase3-view .live-stats>div:not([class]){display:none}
+.phase3-view .live-stats strong{font-size:1rem;line-height:1.25}
+.phase3-view .live-stats small{font-size:.6rem;color:var(--muted);white-space:normal}
+.phase3-view .live-stats em{font-size:.6rem;line-height:1.25;color:var(--muted)}
+.phase3-view .live-fuel-stat em{display:none}
+.phase3-view .tracker-health-strip{grid-column:1/-1;grid-row:4;margin:0;padding:8px 10px;min-height:40px;display:flex;gap:10px;justify-content:space-between;font-size:.75rem;line-height:1.2}
+.phase3-view .active-cleaning-summary,.phase3-view .blocked-live-strip{grid-column:1/-1;margin:0;min-height:44px;padding:8px 10px}
+.phase3-view .phase31-secondary{grid-column:1/-1;border:1px solid var(--line);border-radius:12px;padding:0 10px;background:var(--surface);color:var(--ink);font-size:.8rem}
+.phase3-view .phase31-secondary>summary{min-height:38px;padding:10px 0;cursor:pointer;font-weight:750;line-height:1.2}
+.phase3-view .delivery-action-row{grid-column:1/-1;grid-row:3;position:static;display:flex;flex-wrap:wrap;padding:0;gap:6px;margin:0}
+.phase3-view .has-active-delivery .live-stats{grid-row:4}
+.phase3-view .has-active-delivery .tracker-health-strip{grid-row:5}
+.app-shell.phase3-view .active-delivery-card{padding:10px;gap:6px;font-size:.8rem}
+.phase3-view .active-delivery-card .live-route-button,.phase3-view .active-delivery-card .bad-delivery-control{min-height:40px}
+.phase3-view .delivery-action-row .undo-delivered-button small{display:none}
+.phase3-view .delivery-action-row button{min-height:48px;font-size:1rem;padding:10px;flex:1}
+.phase3-view .tasks-workspace-tabs{grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:8px;position:static}
+.phase3-view .tasks-workspace-tabs button,.phase3-view .phase3-task-groups button{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:52px;white-space:normal;overflow-wrap:anywhere;line-height:1.35;font-size:.85rem;padding:10px;gap:4px}
+.phase3-view .tasks-workspace-tabs button small{font-size:.75rem;line-height:1.3}
+.phase3-view .phase3-task-groups{grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr))}
+@media(min-width:760px){.app-shell.phase3-view .active-shift-page{max-width:900px;margin:auto;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.phase3-view .phase31-shift-clock strong{font-size:1.9rem}}
+.app-shell.phase3-view .active-shift-page,.app-shell.phase3-view.native-shell .active-shift-page{grid-template-rows:none;grid-auto-rows:max-content}
+.app-shell.phase3-view .tracker-health-strip{height:auto;min-height:40px;max-height:none;align-self:start;background:var(--surface);color:var(--ink);opacity:1}
+.app-shell.phase3-view .live-stats{height:auto;min-height:0;align-self:start}
+.phase3-view .phase3-hustle-metric p{display:none}
+.phase3-view .working-head[data-phase31-idle="true"] h1{display:none}
+.phase3-view .working-head[data-phase31-idle="true"]::after{content:"Ready for next task";font-size:.85rem;font-weight:750;display:block;margin-top:8px}
+
+.app-shell.phase3-view .tracker-health-strip .quiet{color:var(--muted)}
+.phase3-view .working-card>.live-wage{display:none}
+.phase3-view .task-filter{grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:8px}
+.phase3-view .task-filter button{min-height:48px;padding:10px;white-space:normal;overflow-wrap:anywhere;line-height:1.35;font-size:.8rem}
+.phase3-view .active-delivery-card .delivery-card-main>span{font-size:.75rem;line-height:1.3}
+.app-shell.phase3-view.active-main{overflow-x:clip}
+.app-shell.phase3-view .active-shift-page{gap:6px}
+.phase3-view .phase31-secondary>summary{min-height:32px;padding:7px 0;font-size:.7rem;line-height:1.2}
+.app-shell.phase3-view .active-cleaning-summary{height:auto;min-height:44px;padding:8px}
+.phase3-view .active-cleaning-summary strong{font-size:.85rem}
+.phase3-view .active-cleaning-summary b{font-size:.7rem}
+.phase3-view .live-stats em{display:none}
+.app-shell.phase3-view .active-shift-page .working-head .live-wage{display:none!important}
+.app-shell.phase3-view .active-shift-page .working-head .eyebrow{font-size:.65rem!important;line-height:1.2!important;margin:0;padding:0}
+.app-shell.phase3-view .active-shift-page .working-head h1{font-size:clamp(1.5rem,7vw,2.4rem)!important;line-height:1.15!important;margin:4px 0;padding:0}
+.app-shell.phase3-view .active-shift-page .working-head .current-activity-name{font-size:.75rem!important;line-height:1.2!important;margin:0;padding:0}
+.app-shell.phase3-view .active-shift-page .active-delivery-card{height:auto!important;min-height:0!important;max-height:none!important}
+.phase3-view .active-delivery-card .phase31-secondary{margin-top:6px}
+.app-shell.phase3-view .active-shift-page{gap:4px}
+.phase3-view .bottom-nav{z-index:30}
+.phase3-view .working-card>.phase31-secondary{grid-column:auto}
+.app-shell.phase3-view .active-shift-page{gap:2px}
+.app-shell.phase3-view .tracker-health-strip .warning{color:var(--ink)}
+.app-shell.phase3-view .tracker-health-strip .good{color:var(--green)}
+/* Keep Break/Clock Out visible above navigation, rather than behind its icons. */
+.phase3-view .shift-action-drawer{transform:translateX(-50%)}
+.phase3-view .shift-action-drawer:not(.open) .shift-action-lip{min-height:44px;padding:6px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.phase3-view .shift-action-drawer:not(.open) .shift-action-lip>span{display:grid;gap:1px}
+.phase3-view .shift-action-lip>span strong{font-size:.75rem;line-height:1.2}
+.phase3-view .shift-action-lip>span small{font-size:.6rem;line-height:1.2}
+.phase3-view .shift-action-lip>i{display:none}
+/* Android legacy rules contain :not/:has selectors with higher specificity.
+   The modern layout must use content-sized tracks in every native state. */
+.app-shell.phase3-view.native-shell.active-main .active-shift-page{grid-template-rows:none!important;grid-auto-rows:max-content!important;padding-bottom:0}
+.app-shell.phase3-view.native-shell.active-main .delivery-panel{grid-template-rows:none!important;grid-auto-rows:max-content!important}

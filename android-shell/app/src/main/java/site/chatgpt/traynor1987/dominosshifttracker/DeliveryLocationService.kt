@@ -5,27 +5,21 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
-import android.location.LocationManager
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.SystemClock
 import android.content.SharedPreferences
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
 import org.json.JSONObject
 
 /**
@@ -37,524 +31,122 @@ class DeliveryLocationService : Service() {
     companion object {
         const val ACTION_START = "site.chatgpt.traynor1987.dominosshifttracker.START_LOCATION"
         const val ACTION_STOP = "site.chatgpt.traynor1987.dominosshifttracker.STOP_LOCATION"
-        const val ACTION_STOP_ALL = "site.chatgpt.traynor1987.dominosshifttracker.STOP_ALL_LOCATION"
-        const val EXTRA_REQUEST_GENERATION = "request_generation"
         const val EXTRA_DELIVERY_ID = "delivery_id"
         private const val NOTIFICATION_CHANNEL_ID = "shift_tracker_delivery_gps"
         private const val NOTIFICATION_ID = 2101
         private const val PREFS_NAME = "native_delivery_tracking"
         private const val PREF_DELIVERY_ID = "delivery_id"
-        private const val PREF_REQUESTED_ID = "requested_delivery_id"
-        private const val PREF_REQUEST_GENERATION = "request_generation"
-        private const val WATCHDOG_INTERVAL_MILLIS = 15_000L
-        // Keystore and AtomicFile work must never share the WebView UI thread.
-        // One process-wide worker also orders service/fallback acknowledgements.
-        private val journalExecutor = GpsJournalWorker()
-        private val sessionGate = NativeSessionGate()
-        // Exactly one index owns the file within a process, including fallback
-        // bridge acknowledgements while the foreground service is absent.
-        private var sharedStore: NativeSampleStore? = null
-        @Synchronized private fun journalStore(context: Context): NativeSampleStore =
-            sharedStore ?: NativeSampleStore(context.applicationContext).also { sharedStore = it }
-        private val requestedSession = NativeSessionGate()
-
-        private var requestedSessionLoaded = false
-
-        @Synchronized private fun loadRequestedSession(context: Context) {
-            if (requestedSessionLoaded) return
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            requestedSession.restore(prefs.getString(PREF_REQUESTED_ID, null), prefs.getLong(PREF_REQUEST_GENERATION, 0L))
-            requestedSessionLoaded = true
-        }
-        private fun saveRequestedSession(context: Context) {
-            // Small command identity only; provider samples remain encrypted on the journal worker.
-            check(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putString(PREF_REQUESTED_ID, requestedSession.current?.deliveryId)
-                .putLong(PREF_REQUEST_GENERATION, requestedSession.generation).commit()) {
-                "Native GPS command identity could not be saved"
-            }
-        }
-        @Synchronized fun requestSession(context: Context, id: String): NativeSessionGate.Token {
-            loadRequestedSession(context)
-            return requestedSession.begin(id).also { saveRequestedSession(context) }
-        }
-        @Synchronized fun isRequestedSession(context: Context, token: NativeSessionGate.Token): Boolean { loadRequestedSession(context); return requestedSession.isCurrent(token) }
-        fun isRequestedSession(token: NativeSessionGate.Token) = requestedSession.isCurrent(token)
-        @Synchronized fun cancelRequestedSession(context: Context, id: String?) {
-            loadRequestedSession(context)
-            if (if (id == null) requestedSession.stopAll() else requestedSession.stopTargeted(id)) saveRequestedSession(context)
-        }
-        fun requestedGeneration() = requestedSession.generation
-        fun clearReturnObservation(context: Context) { journalExecutor.execute { NativeReturnObserver.clear(context) } }
-        @Volatile private var recoveryQueueCount: Int? = null
-
-        private val dispatchHandler = Handler(Looper.getMainLooper())
-        private val dispatchQueue = OrderedDispatchQueue { next -> dispatchHandler.postDelayed({ next() }, 16L) }
-
-        private fun beginReplayOnUiThread() {
-            recoveryQueueCount = null
-            if (Looper.myLooper() == Looper.getMainLooper()) dispatchQueue.beginReplay()
-            else dispatchHandler.post { dispatchQueue.beginReplay() }
-        }
-
-        private fun replaySamplesOnUiThread(samples: List<NativeLocationSample>, offer: (NativeLocationSample) -> Unit) {
-            dispatchHandler.post { dispatchQueue.endReplay(samples.map { sample -> { offer(sample) } }) }
-        }
-
 
         @Volatile
         private var running = false
 
         @Volatile
-        private var diagnostic = "SERVICE_NOT_STARTED"
-
-        @Volatile
-        private var lastSampleReceivedAt: Long? = null
-
-        @Volatile
         private var instance: DeliveryLocationService? = null
 
         fun isRunning() = running
-        fun replayIsDurablyDrained() = recoveryQueueCount == 0 && dispatchQueue.backlogCount == 0 && dispatchQueue.replayBarrierCount == 0
-        fun refreshReturnNotification() { instance?.let { if (running && it.nativeReturned) runCatching { it.startForegroundCompat() } } }
-
-        fun diagnosticCode() = diagnostic
-
-        fun lastSampleReceivedAt() = lastSampleReceivedAt
-
-        fun activeDeliveryId(context: Context? = null): String? = instance?.deliveryId
-            ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.getString(PREF_DELIVERY_ID, null)
-
-        fun pipelineDiagnostics(): JSONObject = instance?.pipelineDiagnosticsJson() ?: JSONObject()
-            .put("locationUpdateRequest", "not_requested")
-            .put("providerAvailability", "unknown")
-            .put("lastKnownLocation", "not_checked")
-            .put("currentLocation", "not_requested")
-            .put("locationCallbackCount", 0)
-            .put("lastRawFixTimestamp", JSONObject.NULL)
-            .put("lastRawFixAccuracy", JSONObject.NULL)
-            .put("lastRawFixProvider", JSONObject.NULL)
-            .put("lastSampleRejection", JSONObject.NULL)
-            .put("recoveryStore", "not_attempted")
-            .put("nativeMessageDispatch", "not_attempted")
-            .put("samplingMode", "not_started")
-            .put("lastSampleReceiptAt", JSONObject.NULL)
-            .put("lastRealDistanceMetres", JSONObject.NULL)
-            .put("watchdogRecoveryCount", 0)
-            .put("lastWatchdogRecoveryAt", JSONObject.NULL)
 
         fun flushPendingSamples(context: android.content.Context) {
-            val service = instance
-            val replayGeneration = sessionGate.generation
-            if (service != null) service.flushPendingSamples() else {
-                beginReplayOnUiThread()
-                journalExecutor.execute {
-                    val samples = runCatching { journalStore(context).pending() }.getOrDefault(emptyList())
-                    recoveryQueueCount = samples.size
-                    replaySamplesOnUiThread(samples) { sample ->
-                        if (sessionGate.generation == replayGeneration) {
-                            MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
-                        }
-                    }
-                }
+            instance?.flushPendingSamples() ?: NativeSampleStore(context.applicationContext).pending().forEach { sample ->
+                MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString())
             }
         }
 
         fun acknowledgePendingSample(context: android.content.Context, sampleId: String) {
-            val service = instance
-            if (service != null) service.acknowledge(sampleId) else journalExecutor.execute {
-                val store = journalStore(context)
-                store.acknowledge(sampleId)
-                recoveryQueueCount = store.pendingCount()
-                dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
-            }
+            instance?.acknowledge(sampleId) ?: NativeSampleStore(context.applicationContext).acknowledge(sampleId)
         }
     }
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var sampleStore: NativeSampleStore
-    private lateinit var returnObserver: NativeReturnObserver
-    private var nativeReturned = false
-    private var lastNotifiedConfirmation = 0L
-    private fun idleMonitoring() = deliveryId?.startsWith("monitor:") == true
     private lateinit var preferences: SharedPreferences
     private var deliveryId: String? = null
-    private var activeCommandToken: NativeSessionGate.Token? = null
     private var requestGeneration = 0L
-    private var latestStartId = 0
-    private var locationCallback: LocationCallback? = null
-    private var sampleReceivedForSession = false
-    private var initialFixCancellation: CancellationTokenSource? = null
-    private val observedSampleIds = mutableSetOf<String>()
-    private val acceptedFixProgress = AcceptedFixProgress()
-    private var locationUpdateRequest = "not_requested"
-    private var providerAvailability = "unknown"
-    private var lastKnownLocation = "not_checked"
-    private var currentLocation = "not_requested"
-    private var locationCallbackCount = 0
-    private var lastRawFixTimestamp: Long? = null
-    private var lastRawFixAccuracy: Float? = null
-    private var lastRawFixProvider: String? = null
-    private var lastSampleRejection: String? = null
-    private var recoveryStore = "not_attempted"
-    private var nativeMessageDispatch = "not_attempted"
-    private var samplingMode = "not_started"
-    private var sessionStartedAtEpochMs = 0L
-    private var sessionStartedAtElapsedMs = 0L
-    private var lastRecoveryElapsedMs: Long? = null
-    private var lastSampleReceiptAt: Long? = null
-    private var lastRealDistanceMetres: Float? = null
-    private val watchdogHandler = Handler(Looper.getMainLooper())
-    private var lastWatchdogRecoveryAt: Long? = null
-    private var watchdogRecoveryCount = 0
-    private val watchdogCheck = object : Runnable {
-        override fun run() {
-            checkForStalledStream()
-            if (running) watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MILLIS)
-        }
-    }
 
-    private fun callbackFor(generation: Long, token: NativeSessionGate.Token) = object : LocationCallback() {
+    private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
-            if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) return
-            locationCallbackCount += 1
-            result.locations.forEach { recordProviderLocation(it, "continuous") }
+            result.locations.forEach(::recordProviderLocation)
         }
-
-        override fun onLocationAvailability(availability: LocationAvailability) {
-            if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) return
-            providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
-            emitProviderState(token.deliveryId, "Location provider availability: $providerAvailability")
-        }
-    }
-
-    private fun removeContinuousUpdates() {
-        locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
-        locationCallback = null
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        sampleStore = journalStore(this)
-        returnObserver = NativeReturnObserver(this)
+        sampleStore = NativeSampleStore(this)
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        loadRequestedSession(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        latestStartId = startId
         when (intent?.action) {
-            ACTION_STOP -> {
-                val target = intent.getStringExtra(EXTRA_DELIVERY_ID)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 128 }
-                if (target != null && intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L) == requestedSession.generation) stopTracking(target)
-            }
-            ACTION_STOP_ALL -> {
-                if (intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L) == requestedSession.generation) stopTracking()
-            }
+            ACTION_STOP -> stopTracking()
             ACTION_START -> {
                 val requestedDeliveryId = intent.getStringExtra(EXTRA_DELIVERY_ID)?.trim()
                 if (requestedDeliveryId.isNullOrEmpty() || requestedDeliveryId.length > 128) {
-                    emitState("service_not_started", null, "A valid delivery session was not supplied")
-                    stopSelfResult(latestStartId)
-                } else {
-                    val token = NativeSessionGate.Token(requestedDeliveryId, intent.getLongExtra(EXTRA_REQUEST_GENERATION, -1L))
-                    if (requestedSession.isCurrent(token)) startTracking(requestedDeliveryId, token)
-                }
+                    MainActivity.sendNativeMessage(stateMessage("error", null, "A valid delivery session was not supplied"))
+                    stopSelf()
+                } else startTracking(requestedDeliveryId)
             }
-            null -> preferences.getString(PREF_DELIVERY_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let { savedId ->
-                val requested = requestedSession.current
-                if (NativeTrackingPolicy.canRestoreStickyDelivery(savedId, requested?.deliveryId, preferences.contains(PREF_REQUEST_GENERATION))) {
-                    if (requested == null) requestSession(this, savedId)
-                    startTracking(savedId)
-                }
-            }
+            null -> preferences.getString(PREF_DELIVERY_ID, null)?.trim()?.takeIf { it.isNotEmpty() }?.let(::startTracking)
         }
         // If Android recreates the service after a process reclaim, restore
         // the active delivery id from the small native journal and continue.
         return START_STICKY
     }
 
-    private fun startTracking(requestedDeliveryId: String, commandToken: NativeSessionGate.Token? = requestedSession.current) {
-        if (requestedDeliveryId.startsWith("monitor:") && ShiftMonitorController.idleId(this) != requestedDeliveryId) {
-            if (!running) stopSelfResult(latestStartId)
-            return
-        }
-        if (running && deliveryId == requestedDeliveryId && activeCommandToken == commandToken) {
+    private fun startTracking(requestedDeliveryId: String) {
+        if (running && deliveryId == requestedDeliveryId) {
             flushPendingSamples()
-            emitState(if (sampleReceivedForSession) "sample_received" else "waiting_for_fix", requestedDeliveryId, null)
+            MainActivity.sendNativeMessage(stateMessage("active", requestedDeliveryId, null))
             return
         }
-        if (deliveryId != null) {
+        if (deliveryId != null && deliveryId != requestedDeliveryId) {
             requestGeneration += 1
-            initialFixCancellation?.cancel()
-            initialFixCancellation = null
-            removeContinuousUpdates()
+            fusedLocationClient.removeLocationUpdates(locationCallback)
             running = false
             deliveryId = null
         }
-        if (!hasPreciseLocationPermission() || !hasNotificationPermission()) {
-            emitState("permission_required", requestedDeliveryId, "Precise location and the persistent tracking notification permission are required")
+        if (!hasFineLocationPermission()) {
+            MainActivity.sendNativeMessage(stateMessage("permission_required", requestedDeliveryId, "Precise location permission is required for native delivery GPS"))
             failTracking()
             return
-        }
-        if (!isLocationProviderEnabled()) {
-            emitState("location_provider_disabled", requestedDeliveryId, "Android Location services are disabled; turn on Location and retry the delivery")
-            // Keep the permitted foreground request alive; restoration of GPS can
-            // resume the stream without an Activity or network connection.
         }
         deliveryId = requestedDeliveryId
-        activeCommandToken = commandToken
-        val token = sessionGate.begin(requestedDeliveryId)
-        journalExecutor.execute {
-            if (!sessionGate.isCurrent(token)) return@execute
-            // A new session fences callbacks, never erases older durable
-            // evidence. The canonical web path deliberately accepts/rejects
-            // each original delivery-tagged row and acknowledges its identity.
-            recoveryQueueCount = sampleStore.pendingCount()
-        }
-        sessionStartedAtEpochMs = System.currentTimeMillis()
-        sessionStartedAtElapsedMs = SystemClock.elapsedRealtime()
-        lastRecoveryElapsedMs = null
-        sampleReceivedForSession = false
-        lastSampleReceivedAt = null
-        observedSampleIds.clear()
-        acceptedFixProgress.reset()
-        locationUpdateRequest = "requesting"
-        providerAvailability = "unknown"
-        lastKnownLocation = "checking"
-        currentLocation = "requesting"
-        locationCallbackCount = 0
-        lastRawFixTimestamp = null
-        lastRawFixAccuracy = null
-        lastRawFixProvider = null
-        lastSampleRejection = null
-        recoveryStore = "not_attempted"
-        nativeMessageDispatch = "not_attempted"
-        nativeReturned = NativeReturnObserver.hasReturn(this, requestedDeliveryId, commandToken?.generation ?: -1L)
-        samplingMode = if (idleMonitoring()) { if (ShiftMonitorController.highAccuracy(this)) "shift_high_accuracy" else "shift_adaptive" } else "near_store"
-        lastSampleReceiptAt = null
-        lastRealDistanceMetres = null
-        lastWatchdogRecoveryAt = null
-        watchdogRecoveryCount = 0
-        diagnostic = "SERVICE_NOT_STARTED"
         preferences.edit().putString(PREF_DELIVERY_ID, requestedDeliveryId).apply()
-        val foregroundStarted = runCatching { startForegroundCompat() }.isSuccess
-        if (!foregroundStarted) {
-            emitState("service_not_started", requestedDeliveryId, "Android could not start the location foreground service; check location and notification permissions")
-            failTracking()
-            return
-        }
-        running = true
-        emitState("service_started", requestedDeliveryId, "Persistent delivery GPS notification posted; requesting precise location")
+        startForegroundCompat()
         val generation = ++requestGeneration
-        requestContinuousUpdates(generation, requestedDeliveryId, true)
-        watchdogHandler.removeCallbacks(watchdogCheck)
-        watchdogHandler.postDelayed(watchdogCheck, WATCHDOG_INTERVAL_MILLIS)
-    }
-
-    private fun checkForStalledStream() {
-        val id = deliveryId ?: return
-        if (!running) return
-        val now = System.currentTimeMillis()
-        val elapsed = SystemClock.elapsedRealtime()
-        if (idleMonitoring() && elapsed - (acceptedFixProgress.lastReceiptElapsedMs ?: sessionStartedAtElapsedMs) < 120_000L) return
-        if (!NativeTrackingPolicy.shouldRecoverStalledStream(elapsed, sessionStartedAtElapsedMs, acceptedFixProgress.lastReceiptElapsedMs, lastRecoveryElapsedMs)) return
-        lastRecoveryElapsedMs = elapsed
-        lastWatchdogRecoveryAt = now
-        watchdogRecoveryCount += 1
-        diagnostic = "GPS_STALLED_RECOVERING"
-        locationUpdateRequest = "watchdog_restarting"
-        // Use the established bridge status vocabulary so older hosted builds
-        // can display recovery immediately; the diagnostics retain the exact
-        // watchdog reason and recovery count.
-        emitState("waiting_for_fix", id, "GPS stalled: no accepted native fix for 60 seconds; restarting the same delivery location stream")
-        val generation = ++requestGeneration
-        initialFixCancellation?.cancel()
-        initialFixCancellation = null
-        val previousCallback = locationCallback
-        locationCallback = null
-        if (previousCallback == null) {
-            requestContinuousUpdates(generation, id, true)
-            return
-        }
-        fusedLocationClient.removeLocationUpdates(previousCallback).addOnCompleteListener {
-            if (generation != requestGeneration || !running || deliveryId != id) return@addOnCompleteListener
-            requestContinuousUpdates(generation, id, true)
-        }
-    }
-
-    private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (idleMonitoring()) {
-        LocationRequest.Builder(if (ShiftMonitorController.highAccuracy(this)) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, 30_000L)
-            .setMinUpdateIntervalMillis(15_000L).setMinUpdateDistanceMeters(0f).setMaxUpdateDelayMillis(30_000L).build()
-    } else if (nearStore) {
-        // Delivery start and return use time-based fixes so parking immediately
-        // after crossing cannot leave confirmation waiting for another 5m move.
-        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
-            .setMinUpdateIntervalMillis(1_000L)
-            .setMinUpdateDistanceMeters(0f)
-            .setMaxUpdateDelayMillis(2_000L)
-            .build()
-    } else {
-        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
             .setMinUpdateIntervalMillis(2_000L)
             .setMinUpdateDistanceMeters(5f)
             .setMaxUpdateDelayMillis(10_000L)
             .build()
-    }
-
-    private fun requestContinuousUpdates(generation: Long, requestedDeliveryId: String, initial: Boolean) {
-        val token = sessionGate.current ?: return
-        if (token.deliveryId != requestedDeliveryId || generation != requestGeneration || !running) return
-        val callback = callbackFor(generation, token)
-        locationCallback = callback
-        val request = buildLocationRequest(samplingMode == "near_store")
-        locationUpdateRequest = "requesting_$samplingMode"
         runCatching {
-            fusedLocationClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+            fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnSuccessListener {
-                    if (!sessionGate.isCurrent(token) || generation != requestGeneration || !running) {
-                        fusedLocationClient.removeLocationUpdates(callback)
-                        return@addOnSuccessListener
-                    }
-                    locationUpdateRequest = "accepted_$samplingMode"
-                    diagnostic = "WAITING_FOR_FIX"
-                    emitState("waiting_for_fix", deliveryId, "Location-update request accepted in $samplingMode mode")
-                    if (initial) {
-                        checkProviderAvailability(generation, requestedDeliveryId)
-                        if (!idleMonitoring()) requestInitialFixes(generation, requestedDeliveryId)
-                        flushPendingSamples()
-                    }
+                    if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnSuccessListener
+                    running = true
+                    MainActivity.sendNativeMessage(stateMessage("active", deliveryId, null))
+                    flushPendingSamples()
                 }
                 .addOnFailureListener {
                     if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@addOnFailureListener
-                    locationUpdateRequest = "rejected"
-                    emitState("service_not_started", deliveryId, "Android location-update request was rejected")
+                    running = false
+                    MainActivity.sendNativeMessage(stateMessage("error", deliveryId, "Android location provider could not start"))
                     failTracking()
                 }
         }.onFailure {
             if (generation != requestGeneration || deliveryId != requestedDeliveryId) return@onFailure
-            locationUpdateRequest = "rejected"
-            emitState("service_not_started", deliveryId, "Android location-update request was rejected")
+            running = false
+            MainActivity.sendNativeMessage(stateMessage("error", deliveryId, "Android location provider could not start"))
             failTracking()
         }
     }
 
-    private fun updateSamplingModeFor(location: Location, id: String) {
-        val distance = NativeTrackingPolicy.distanceMetres(location.latitude, location.longitude, NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE)
-        lastRealDistanceMetres = distance.toFloat()
-        val currentPolicyMode = if (samplingMode == "near_store") NativeTrackingPolicy.SamplingMode.NEAR_STORE else NativeTrackingPolicy.SamplingMode.ROUTE
-        val nextMode = if (NativeTrackingPolicy.samplingMode(location.latitude, location.longitude, currentPolicyMode) == NativeTrackingPolicy.SamplingMode.NEAR_STORE) "near_store" else "route"
-        if (nextMode == samplingMode || !running || deliveryId != id) return
-        samplingMode = nextMode
-        val generation = ++requestGeneration
-        // Do not race removal of the old request against registration of the
-        // same callback under the new profile; a late removal could otherwise
-        // cancel the replacement and strand a stationary return.
-        val previousCallback = locationCallback
-        locationCallback = null
-        if (previousCallback == null) {
-            requestContinuousUpdates(generation, id, false)
-            return
-        }
-        fusedLocationClient.removeLocationUpdates(previousCallback).addOnCompleteListener {
-            if (generation == requestGeneration && running && deliveryId == id) requestContinuousUpdates(generation, id, false)
-        }
-    }
-
-    private fun checkProviderAvailability(generation: Long, id: String) {
-        fusedLocationClient.locationAvailability
-            .addOnSuccessListener { availability ->
-                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
-                providerAvailability = if (availability.isLocationAvailable) "available" else "unavailable"
-                emitProviderState(id, "Location provider availability: $providerAvailability")
-            }
-            .addOnFailureListener {
-                if (generation != requestGeneration || deliveryId != id) return@addOnFailureListener
-                providerAvailability = "unknown"
-                emitProviderState(id, "Location provider availability could not be read; continuous request remains active")
-            }
-    }
-
-    private fun requestInitialFixes(generation: Long, id: String) {
-        fusedLocationClient.lastLocation
-            .addOnSuccessListener { location ->
-                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
-                if (location == null) {
-                    lastKnownLocation = "unavailable"
-                    return@addOnSuccessListener
-                }
-                lastKnownLocation = "available"
-                recordInitialLocation(location, "last_known")
-            }
-            .addOnFailureListener {
-                if (generation == requestGeneration && deliveryId == id) lastKnownLocation = "unavailable"
-            }
-        initialFixCancellation?.cancel()
-        initialFixCancellation = CancellationTokenSource()
-        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, initialFixCancellation!!.token)
-            .addOnSuccessListener { location ->
-                if (generation != requestGeneration || deliveryId != id) return@addOnSuccessListener
-                if (location == null) {
-                    currentLocation = "unavailable"
-                    return@addOnSuccessListener
-                }
-                currentLocation = "available"
-                recordInitialLocation(location, "current")
-            }
-            .addOnFailureListener {
-                if (generation == requestGeneration && deliveryId == id) currentLocation = "unavailable"
-            }
-    }
-
-    private fun recordInitialLocation(location: Location, source: String) {
-        val ageMillis = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L
-        if (ageMillis < 0 || ageMillis > 30_000L) {
-            lastSampleRejection = "${source}_stale_timestamp"
-            return
-        }
-        if (!location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 100f) {
-            lastSampleRejection = "${source}_accuracy_out_of_range"
-            return
-        }
-        recordProviderLocation(location, source)
-    }
-
-    private fun recordProviderLocation(location: Location, source: String) {
-        val id = deliveryId ?: run {
-            lastSampleRejection = "no_active_delivery"
-            return
-        }
-        lastRawFixTimestamp = location.time.takeIf { it > 0L }
-        lastRawFixAccuracy = location.accuracy.takeIf { it.isFinite() }
-        lastRawFixProvider = location.provider?.take(64)
-        lastSampleReceiptAt = System.currentTimeMillis()
+    private fun recordProviderLocation(location: Location) {
+        val id = deliveryId ?: return
         // Provider timestamps and accuracy are retained exactly as supplied.
         // Invalid provider values are rejected; no current-time interpolation.
-        val rejection = when {
-            location.time <= 0L -> "invalid_timestamp"
-            !NativeTrackingPolicy.acceptsProviderTimestamp(sessionStartedAtEpochMs, location.time) -> "fix_predates_delivery_session"
-            !NativeTrackingPolicy.acceptsProviderAge(SystemClock.elapsedRealtimeNanos(), location.elapsedRealtimeNanos) -> "stale_provider_fix"
-            !location.latitude.isFinite() || location.latitude !in -90.0..90.0 -> "invalid_latitude"
-            !location.longitude.isFinite() || location.longitude !in -180.0..180.0 -> "invalid_longitude"
-            !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f -> "accuracy_out_of_range"
-            else -> null
-        }
-        if (rejection != null) {
-            lastSampleRejection = rejection
-            return
-        }
-        if (idleMonitoring()) {
-            // At-store fixes update bounded liveness only; never append a personal route.
-            acceptedFixProgress.accepted("$id:${location.time}", SystemClock.elapsedRealtime())
-            lastSampleReceivedAt = location.time
-            diagnostic = "SAMPLE_RECEIVED"
-            emitState("sample_received", id, "Shift monitoring fix accepted; no route retained")
-            return
-        }
-        updateSamplingModeFor(location, id)
+        if (location.time <= 0L || !location.latitude.isFinite() || location.latitude !in -90.0..90.0 || !location.longitude.isFinite() || location.longitude !in -180.0..180.0 || !location.accuracy.isFinite() || location.accuracy < 0f || location.accuracy > 250f) return
         val sample = NativeLocationSample(
             sampleId = "$id:${location.time}",
             deliveryId = id,
@@ -565,181 +157,39 @@ class DeliveryLocationService : Service() {
             speed = if (location.hasSpeed() && location.speed.isFinite() && location.speed >= 0f) location.speed else null,
             heading = if (location.hasBearing() && location.bearing.isFinite()) location.bearing else null,
         )
-        // lastLocation, getCurrentLocation and the continuous callback can all
-        // legitimately return the same provider fix. Only suppress a sample
-        // after that exact id has been safely journaled or recovered; a failed
-        // append must remain retryable by the next provider callback.
-        if (sample.sampleId in observedSampleIds) {
-            return
-        }
-        val journalToken = sessionGate.current ?: return
-        val receivedElapsedMs = SystemClock.elapsedRealtime()
-        val observationGeneration = activeCommandToken?.generation ?: return
-        journalExecutor.execute {
-            if (!sessionGate.isCurrent(journalToken)) return@execute
-            val result = sampleStore.append(sample)
-            recoveryQueueCount = sampleStore.pendingCount()
-            // Native observation and persistence do not wait on bridge dispatch or React.
-            val observation = synchronized(sessionGate) {
-                if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken))
-                    returnObserver.observe(sample, observationGeneration) else null
-            }
-            if (observation != null) dispatchHandler.post {
-                if (sessionGate.isCurrent(journalToken) && running) {
-                    val detected = observation.optLong("confirmedAt") > 0
-                    if (nativeReturned != detected || (detected && observation.optLong("nativeConfirmedAt") != lastNotifiedConfirmation)) {
-                        lastNotifiedConfirmation = observation.optLong("nativeConfirmedAt")
-                        nativeReturned = detected
-                        runCatching { startForegroundCompat() }
-                    }
-                }
-            }
-            dispatchHandler.post {
-                // Journal acceptance renews liveness immediately. Bridge replay
-                // may be yielding for seconds and must not cause false stalls.
-                if (sessionGate.isCurrent(journalToken) && running &&
-                    result !is NativeSampleStore.AppendResult.Failed) {
-                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs)
-                }
-                dispatchQueue.offer(listOf({
-                    if (sessionGate.isCurrent(journalToken) && running) completeJournaledSample(sample, id, result, receivedElapsedMs)
-                }))
-            }
-        }
-    }
-
-    private fun completeJournaledSample(sample: NativeLocationSample, id: String, result: NativeSampleStore.AppendResult, receivedElapsedMs: Long) {
-        // Provider callbacks may have queued the same fix while its first
-        // journal write was running. Keep the existing idempotent dispatch.
-        if (sample.sampleId in observedSampleIds) return
-        val acceptedSample = when (result) {
-            is NativeSampleStore.AppendResult.Appended -> {
-                recoveryStore = "appended"
-                result.sample
-            }
-            is NativeSampleStore.AppendResult.AlreadyPresent -> {
-                // An earlier process/bridge attempt may already have safely
-                // journaled this provider fix. That is idempotent recovery,
-                // not a storage failure: dispatch the stored copy unchanged.
-                recoveryStore = "already_present"
-                result.sample
-            }
-            is NativeSampleStore.AppendResult.Failed -> {
-                recoveryStore = "append_failed:${result.reason}"
-                lastSampleRejection = "recovery_store_${result.reason}"
-                // Recovery protects samples while the WebView is unavailable,
-                // but a local persistence problem must not discard an
-                // otherwise valid live fix when the exact-origin bridge is
-                // connected. If live dispatch also fails, leave the sample
-                // unobserved so the next real provider callback can retry.
-                if (dispatchSample(sample)) {
-                    recoveryStore = "append_failed_live_dispatched:${result.reason}"
-                    observedSampleIds.add(sample.sampleId)
-                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs)
-                    lastSampleRejection = null
-                    val firstSample = !sampleReceivedForSession
-                    sampleReceivedForSession = true
-                    lastSampleReceivedAt = sample.timestampEpochMs
-                    diagnostic = "SAMPLE_RECEIVED"
-                    if (firstSample) emitState(
-                        "sample_received",
-                        id,
-                        "Native GPS sample delivered live; encrypted recovery remains unavailable and is reported in diagnostics",
-                    )
-                }
-                return
-            }
-        }
-        observedSampleIds.add(acceptedSample.sampleId)
-        lastSampleRejection = null
-        val firstSample = !sampleReceivedForSession
-        sampleReceivedForSession = true
-        // Keep this diagnostic current for every validated provider sample,
-        // not only the first fix in the delivery session.
-        lastSampleReceivedAt = acceptedSample.timestampEpochMs
-        diagnostic = "SAMPLE_RECEIVED"
-        if (firstSample) {
-            dispatchSample(acceptedSample)
-            emitState("sample_received", id, "Native GPS sample received, safely journaled and offered to the hosted PWA")
-            return
-        }
-        dispatchSample(acceptedSample)
+        sampleStore.append(sample)
+        MainActivity.sendNativeMessage(sampleMessage(sample))
     }
 
     fun flushPendingSamples() {
-        // Pause synchronously during the trusted hello/resume turn, before a
-        // queued live completion can drain against the newly connected bridge.
-        beginReplayOnUiThread()
-        val replayGeneration = sessionGate.generation
-        journalExecutor.execute {
-            val samples = runCatching { sampleStore.pending() }.getOrDefault(emptyList())
-            recoveryQueueCount = samples.size
-            replaySamplesOnUiThread(samples) {
-                if (sessionGate.generation == replayGeneration) dispatchSample(it)
-            }
-        }
+        sampleStore.pending().forEach { sample -> MainActivity.sendNativeMessage(sampleMessage(sample)) }
     }
 
-    fun acknowledge(sampleId: String) {
-        journalExecutor.execute {
-            sampleStore.acknowledge(sampleId)
-            recoveryQueueCount = sampleStore.pendingCount()
-            dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
-        }
-    }
+    fun acknowledge(sampleId: String) = sampleStore.acknowledge(sampleId)
 
-    private fun stopTracking(requestedDeliveryId: String? = null) {
-        val target = requestedDeliveryId?.trim()?.takeIf { it.isNotEmpty() }
-        val activeId = deliveryId ?: preferences.getString(PREF_DELIVERY_ID, null)
-        if (target != null && target != activeId) return
-        sessionGate.stopAll()
+    private fun stopTracking() {
         requestGeneration += 1
-        watchdogHandler.removeCallbacks(watchdogCheck)
-        initialFixCancellation?.cancel()
-        initialFixCancellation = null
-        removeContinuousUpdates()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
-        diagnostic = "STOPPED"
-        emitState("stopped", deliveryId, null)
+        MainActivity.sendNativeMessage(stateMessage("stopped", deliveryId, null))
         deliveryId = null
-        activeCommandToken = null
-        sessionStartedAtEpochMs = 0L
-        samplingMode = "stopped"
-        sampleReceivedForSession = false
-        lastSampleReceivedAt = null
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
-        val monitor = ShiftMonitorController.idleId(this)
-        if (monitor != null && target != null) {
-            startTracking(monitor, requestSession(this, monitor))
-        } else {
-            stopForegroundCompat()
-            stopSelfResult(latestStartId)
-        }
+        stopForegroundCompat()
+        stopSelf()
     }
 
     private fun failTracking() {
-        sessionGate.stopAll()
         requestGeneration += 1
-        watchdogHandler.removeCallbacks(watchdogCheck)
-        initialFixCancellation?.cancel()
-        initialFixCancellation = null
-        removeContinuousUpdates()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         deliveryId = null
-        activeCommandToken = null
-        sessionStartedAtEpochMs = 0L
-        samplingMode = "failed"
         preferences.edit().remove(PREF_DELIVERY_ID).apply()
         stopForegroundCompat()
-        stopSelfResult(latestStartId)
+        stopSelf()
     }
 
     override fun onDestroy() {
-        if (instance === this) sessionGate.stopAll()
-        requestGeneration += 1
-        initialFixCancellation?.cancel()
-        watchdogHandler.removeCallbacks(watchdogCheck)
-        removeContinuousUpdates()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
         running = false
         if (instance === this) instance = null
         super.onDestroy()
@@ -747,48 +197,19 @@ class DeliveryLocationService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun hasPreciseLocationPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-
-    private fun hasNotificationPermission() = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-
-    private fun hasBackgroundLocationPermission() = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
-
-    private fun isLocationProviderEnabled(): Boolean = runCatching {
-        val manager = getSystemService(LocationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) manager.isLocationEnabled
-        else manager.isProviderEnabled(LocationManager.GPS_PROVIDER) || manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-    }.getOrDefault(false)
+    private fun hasFineLocationPermission() = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun startForegroundCompat() {
-        val mirror = NativeShiftState.read(this)
-        val canQueueReturn = nativeReturned && mirror != null && mirror.activityId == deliveryId && mirror.requiredCustomers > 0 && mirror.deliveredCustomers >= mirror.requiredCustomers && mirror.latestDeliveredAt > 0 && NativeReturnObserver.confirmedSampleAt(this) >= mirror.latestDeliveredAt
-        val returnIntent = Intent(this, MainActivity::class.java)
-            .setAction("native_return:${deliveryId}:${activeCommandToken?.generation}")
-            .putExtra("native_return_delivery", deliveryId)
-            .putExtra("native_return_shift", mirror?.shiftId)
-            .putExtra("native_return_generation", activeCommandToken?.generation ?: -1L)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle(if (nativeReturned) { if (canQueueReturn) "Returned to Store" else "Store location detected" } else if (idleMonitoring()) "Shift monitoring active" else "Shift Tracker delivery GPS")
-            .setContentText(if (nativeReturned) { if (canQueueReturn) "Return detected · open to reconcile and complete" else "Customer delivery outstanding · open to review" } else if (idleMonitoring()) "Adaptive location monitoring throughout your shift" else "Delivery tracking is active")
-            .setContentIntent(android.app.PendingIntent.getActivity(this, 2101,
-                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
-            .apply { if (nativeReturned) addAction(0, if (canQueueReturn) "Back at Store" else "Review return",
-                android.app.PendingIntent.getActivity(this@DeliveryLocationService, 2102, returnIntent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)) }
+            .setContentTitle("Shift Tracker delivery GPS")
+            .setContentText("Delivery tracking is active")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         else startForeground(NOTIFICATION_ID, notification)
-        if (nativeReturned) {
-            val id = deliveryId
-            val generation = activeCommandToken?.generation
-            journalExecutor.execute { NativeReturnObserver.notificationPosted(this, id, generation) }
-        }
     }
 
     private fun createNotificationChannel() {
@@ -808,89 +229,9 @@ class DeliveryLocationService : Service() {
         }
     }
 
-    private fun emitState(status: String, id: String?, message: String?) {
-        diagnostic = diagnosticForStatus(status)
-        MainActivity.sendNativeMessage(stateMessage(status, id, message))
-    }
-
-    private fun emitProviderState(id: String?, availabilityMessage: String) {
-        if (sampleReceivedForSession) {
-            emitState("sample_received", id, "$availabilityMessage; validated native GPS stream remains active")
-        } else {
-            emitState("waiting_for_fix", id, "$availabilityMessage; waiting for a validated fix")
-        }
-    }
-
-    private fun diagnosticForStatus(status: String): String = when (status) {
-        "permission_required" -> "PERMISSION_MISSING"
-        "location_provider_disabled" -> "LOCATION_PROVIDER_DISABLED"
-        "waiting_for_fix", "active" -> "WAITING_FOR_FIX"
-        "sample_received" -> "SAMPLE_RECEIVED"
-        "service_started" -> "SERVICE_ACTIVE"
-        "stopped", "background_permission_granted" -> "STOPPED"
-        "background_permission_required", "background_settings_opened" -> "BACKGROUND_PERMISSION_MISSING"
-        else -> "SERVICE_NOT_STARTED"
-    }
-
-    private fun diagnosticsJson(): JSONObject = JSONObject()
-        .put("diagnostic", diagnostic)
-        .put("foregroundLocation", when {
-            hasPreciseLocationPermission() -> "precise"
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED -> "approximate"
-            else -> "missing"
-        })
-        .put("backgroundLocationGranted", hasBackgroundLocationPermission())
-        .put("notificationsGranted", hasNotificationPermission())
-        .put("locationProviderEnabled", isLocationProviderEnabled())
-        .put("serviceRunning", running)
-        .put("trackedDeliveryId", deliveryId ?: JSONObject.NULL)
-        .put("lastSampleReceivedAt", lastSampleReceivedAt ?: JSONObject.NULL)
-        .put("backgroundPermissionLabel", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) packageManager.getBackgroundPermissionOptionLabel().toString() else "Allow all the time")
-        .apply {
-            val pipeline = pipelineDiagnosticsJson()
-            pipeline.keys().forEach { key -> put(key, pipeline.get(key)) }
-        }
-
-    private fun pipelineDiagnosticsJson(): JSONObject = JSONObject()
-        .put("locationUpdateRequest", locationUpdateRequest)
-        .put("providerAvailability", providerAvailability)
-        .put("lastKnownLocation", lastKnownLocation)
-        .put("currentLocation", currentLocation)
-        .put("locationCallbackCount", locationCallbackCount)
-        .put("lastRawFixTimestamp", lastRawFixTimestamp ?: JSONObject.NULL)
-        .put("lastRawFixAccuracy", lastRawFixAccuracy?.toDouble() ?: JSONObject.NULL)
-        .put("lastRawFixProvider", lastRawFixProvider ?: JSONObject.NULL)
-        .put("lastSampleReceiptAt", lastSampleReceiptAt ?: JSONObject.NULL)
-        .put("lastAcceptedFixElapsedMs", acceptedFixProgress.lastReceiptElapsedMs ?: JSONObject.NULL)
-        .put("nativeRecoveryScope", "process_restart_only_no_boot_receiver")
-        .put("nativeDispatchBacklogCount", dispatchQueue.backlogCount)
-        .put("nativeReplayBarrierCount", dispatchQueue.replayBarrierCount)
-        .put("samplingMode", samplingMode)
-        .put("shiftMonitoringEnabled", ShiftMonitorController.idleId(this) != null)
-        .apply { val observation = NativeReturnObserver.diagnostics(this@DeliveryLocationService); observation.keys().forEach { key -> put(key, observation.get(key)) } }
-        .put("lastRealDistanceMetres", lastRealDistanceMetres?.toDouble() ?: JSONObject.NULL)
-        .put("watchdogRecoveryCount", watchdogRecoveryCount)
-        .put("lastWatchdogRecoveryAt", lastWatchdogRecoveryAt ?: JSONObject.NULL)
-        .put("recoveryQueueCount", recoveryQueueCount ?: JSONObject.NULL)
-        .put("lastSampleRejection", lastSampleRejection ?: JSONObject.NULL)
-        .put("recoveryStore", recoveryStore)
-        .put("nativeMessageDispatch", nativeMessageDispatch)
-        .apply {
-            val journal = sampleStore.diagnostics()
-            journal.keys().forEach { key -> put(key, journal.get(key)) }
-        }
-
-    private fun dispatchSample(sample: NativeLocationSample): Boolean {
-        val dispatched = MainActivity.sendNativeMessage(sampleMessage(sample))
-        nativeMessageDispatch = if (dispatched) "dispatched" else "bridge_not_connected"
-        return dispatched
-    }
-
     private fun stateMessage(status: String, id: String?, message: String?): String = JSONObject()
         .put("type", "shift_tracker_location:state")
         .put("status", status)
-        .put("diagnostic", diagnostic)
-        .put("diagnostics", diagnosticsJson())
         .apply { if (id != null) put("deliveryId", id) }
         .apply { if (message != null) put("message", message) }
         .toString()

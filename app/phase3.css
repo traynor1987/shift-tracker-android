@@ -1,0 +1,105 @@
+/* Phase 3 is opt-in by root class. Web 2.1.235 globals remain untouched. */
+.phase3-live-overview[hidden], .phase3-tasks-overview[hidden], .phase3-status-panel[hidden], .phase3-review-checklist[hidden] { display:none !important; }
+.app-shell.phase3-view { --driver-radius:20px; }
+.app-shell.phase3-view.active-main { height:auto; min-height:100svh; overflow:visible; padding-bottom:calc(92px + env(safe-area-inset-bottom)); }
+.app-shell.phase3-view .main-content { width:min(100% - 24px,1180px); height:auto; min-height:0; overflow:visible; padding-bottom:20px; }
+.app-shell.phase3-view .active-shift-page { height:auto; min-height:0; display:flex; flex-direction:column; gap:14px; }
+.app-shell.phase3-view .working-card { height:auto; padding:18px; display:flex; flex-direction:column; gap:10px; border-radius:var(--driver-radius); }
+.phase3-view .phase3-live-overview { order:-1; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; padding:0 0 12px; border-bottom:1px solid rgba(255,255,255,.22); }
+.phase3-view .phase3-live-overview small { display:block; font-size:.69rem; letter-spacing:.08em; font-weight:800; opacity:.8; }
+.phase3-view .phase3-live-state strong { display:block; margin-top:5px; font-size:1.05rem; }
+.phase3-view .phase3-next-action { text-align:right; }
+.phase3-view .phase3-next-action strong { display:block; margin-top:5px; font-size:1.1rem; }
+.phase3-view .phase3-live-overview p { margin:5px 0 0; font-size:.78rem; opacity:.85; line-height:1.45; }
+.phase3-view .phase3-hustle-metric { grid-column:1 / -1; text-align:center; padding:8px 0; }
+.phase3-view .phase3-hustle-metric strong { display:block; font-variant-numeric:tabular-nums; font-weight:900; letter-spacing:-.04em; font-size:clamp(2.6rem,12vw,4.4rem); line-height:1.1; overflow-wrap:anywhere; }
+.phase3-view .phase3-hustle-metric strong.is-unavailable { font-size:1.4rem; letter-spacing:0; }
+.phase3-view .phase3-earnings { grid-column:1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.phase3-view .phase3-earnings strong { display:block; margin-top:4px; font-size:1.3rem; font-variant-numeric:tabular-nums; }
+.phase3-view .phase3-live-trust { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:6px 14px; font-size:.72rem; opacity:.8; }
+.app-shell.phase3-view .working-head h1 { font-size:clamp(1.8rem,6vw,2.5rem); font-variant-numeric:tabular-nums; }
+.phase3-view .working-head .live-wage { display:none; }
+.app-shell.phase3-view .live-stats { margin-top:0; }
+.app-shell.phase3-view .delivery-panel { height:auto; min-height:0; display:grid; grid-template-rows:auto auto auto; gap:8px; }
+.app-shell.phase3-view .delivery-buttons { height:auto; min-height:0; gap:12px; }
+.app-shell.phase3-view .delivery-buttons button { height:auto; min-height:76px; border-radius:18px; padding:12px; }
+.app-shell.phase3-view.native-shell.active-main .delivery-buttons button { height:auto; min-height:76px; }
+.app-shell.phase3-view .active-delivery-card { height:auto; min-height:0; padding:16px; border-radius:18px; grid-template-columns:minmax(0,1fr); gap:12px; }
+.app-shell.phase3-view .active-delivery-card.single { background:var(--single-delivery); }
+.app-shell.phase3-view .active-delivery-card.double { background:var(--double-delivery); }
+.app-shell.phase3-view .active-delivery-card strong { font-size:1.3rem; }
+.app-shell.phase3-view .active-delivery-card > button, .app-shell.phase3-view .delivery-action-row button { min-height:58px; font-size:1rem; }
+.app-shell.phase3-view .delivery-timing-card { padding:16px; }
+.app-shell.phase3-view .hustle-timing-grid { min-height:92px; }
+.app-shell.phase3-view .hustle-timing-grid strong { font-size:clamp(1.25rem,5vw,2rem); font-variant-numeric:tabular-nums; }
+.app-shell.phase3-view .hustle-timing-grid small { font-size:.72rem; }
+.phase3-view button:focus-visible, .phase3-view a:focus-visible, .phase3-view input:focus-visible, .phase3-view summary:focus-visible { outline:3px solid var(--double-delivery); outline-offset:3px; }
+.phase3-view button, .phase3-view summary { touch-action:manipulation; }
+.phase3-view .phase3-status-panel { display:grid; gap:8px; margin-top:10px; padding:12px; border:1px solid var(--line); border-radius:14px; background:var(--surface); color:var(--ink); }
+.phase3-view .phase3-status-panel dl { display:grid; grid-template-columns:minmax(95px,.5fr) minmax(0,1fr); gap:8px; margin:0; font-size:.85rem; }
+.phase3-view .phase3-status-panel dt { color:var(--muted); }
+.phase3-view .phase3-status-panel dd { margin:0; overflow-wrap:anywhere; }
+.phase3-view .phase3-status-panel small { color:var(--muted); line-height:1.45; }
+.phase3-view .phase3-review-checklist { padding:12px; border-radius:14px; background:var(--surface); color:var(--ink); }
+.phase3-view .phase3-review-checklist ul { display:grid; gap:8px; padding:0; list-style:none; }
+.phase3-view .phase3-review-checklist li { display:flex; justify-content:space-between; gap:12px; font-size:.85rem; }
+.phase3-view .phase3-review-checklist em { font-style:normal; font-size:.75rem; color:var(--muted); }
+.phase3-view .phase3-tasks-overview { display:grid; gap:12px; padding:16px; border:1px solid var(--line); border-radius:20px; background:var(--surface); }
+.phase3-view .phase3-task-now { padding:12px; border-radius:14px; background:color-mix(in srgb,var(--double-delivery),transparent 92%); }
+.phase3-view .phase3-task-now strong { display:block; font-size:1.2rem; }
+.phase3-view .phase3-task-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.phase3-view .phase3-task-groups button, .phase3-view .phase3-paused-tasks button { min-height:48px; padding:10px; border-radius:12px; text-align:left; }
+.phase3-view .phase3-paused-tasks { display:flex; flex-wrap:wrap; gap:8px; }
+.phase3-view .phase3-task-outcome-help { font-size:.8rem; line-height:1.45; color:var(--muted); }
+.phase3-view .quick-job-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.phase3-view .quick-job-tile { min-height:64px; padding:12px; }
+.phase3-view .tasks-page button { min-height:44px; }
+.phase3-view .tasks-workspace-tabs { position:sticky; top:calc(66px + var(--app-safe-top)); z-index:4; background:var(--bg); }
+.phase3-view .task-outcome-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.phase3-view .settings-page { min-width:0; }
+.phase3-view .settings-page-heading { order:-1; }
+.phase3-view .settings-group-menu { display:none; }
+.phase3-view .settings-main .settings-group-menu { display:grid; gap:16px; }
+.phase3-view .settings-search { display:grid; gap:6px; font-size:.8rem; font-weight:750; }
+.phase3-view .settings-search input { min-height:48px; width:100%; padding:12px; border:1px solid var(--line); border-radius:14px; }
+.phase3-view .settings-group { margin:0; padding:14px; border:1px solid var(--line); border-radius:18px; background:var(--surface); }
+.phase3-view .settings-group h2 { margin:0 0 10px; font-size:.75rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+.phase3-view .settings-group-rows { display:grid; gap:8px; }
+.phase3-view .settings-group-rows button { min-height:56px; width:100%; display:grid; gap:3px; padding:12px; border:1px solid var(--line); border-radius:12px; text-align:left; }
+.phase3-view .settings-advanced summary { min-height:48px; display:flex; align-items:center; font-weight:800; }
+.phase3-view .settings-backup-coverage { display:grid; gap:8px; padding:14px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.legacy-view-setting small { display:block; line-height:1.45; margin-top:5px; }
+.phase3-view .modal-backdrop { overflow-y:auto; padding:16px 12px calc(16px + env(safe-area-inset-bottom)); }
+.phase3-view .confirm-modal { max-height:calc(100dvh - 32px - env(safe-area-inset-bottom)); overflow-y:auto; }
+.phase3-view .main-content *, .phase3-view .settings-group-menu * { min-width:0; }
+@media (min-width:760px) {
+  .app-shell.phase3-view .main-content { width:min(100% - 40px,1180px); }
+  .app-shell.phase3-view .active-shift-page { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); align-items:start; }
+  .app-shell.phase3-view .working-card { grid-column:1; grid-row:1 / span 2; }
+  .app-shell.phase3-view .delivery-panel { grid-column:2; grid-row:1; }
+  .app-shell.phase3-view .mileage-card { grid-column:2; grid-row:2; }
+  .phase3-view .phase3-hustle-metric strong { font-size:4rem; }
+  .phase3-view .phase3-tasks-overview { grid-template-columns:1fr 1fr; }
+  .phase3-view .phase3-task-groups, .phase3-view .phase3-task-outcome-help { grid-column:1 / -1; }
+  .phase3-view .quick-job-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .phase3-view .settings-group-menu { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .phase3-view .settings-search { grid-column:1 / -1; }
+}
+@media (min-width:1000px) and (orientation:landscape) {
+  .app-shell.phase3-view .main-content { width:min(100% - 48px,1320px); }
+  .app-shell.phase3-view .active-shift-page { grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr); }
+}
+@media (max-width:359px) {
+  .phase3-view .phase3-live-overview { gap:10px; }
+  .phase3-view .phase3-next-action strong { font-size:.92rem; }
+  .phase3-view .phase3-hustle-metric strong { font-size:2.6rem; }
+  .phase3-view .phase3-task-groups { grid-template-columns:1fr; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .phase3-view *, .phase3-view *::before, .phase3-view *::after { scroll-behavior:auto !important; }
+}
+
+.phase3-view .shift-finish-checks{display:none}
+.phase3-view .phase3-hustle-metric strong.is-unavailable{font-size:1.4rem}
+
+.phase3-view .saving-note{display:none}

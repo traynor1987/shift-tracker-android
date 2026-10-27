@@ -1,0 +1,35 @@
+{
+  "css": {
+    "files": [
+      "assets/index-B0-8UtOx.css"
+    ],
+    "bytes": 584861,
+    "gzip": 82568
+  },
+  "main": {
+    "file": "assets/ShiftTrackerApp-Dqt1Zyrc.js",
+    "bytes": 925280,
+    "gzip": 238004
+  },
+  "initial": {
+    "files": [
+      "assets/ShiftTrackerApp-Dqt1Zyrc.js",
+      "assets/rolldown-runtime-hePW80VL.js",
+      "assets/framework-DLkis2XS.js",
+      "assets/index-8572mxrj.js"
+    ],
+    "bytes": 1196692,
+    "gzip": 321838
+  },
+  "lazy": {
+    "files": [
+      "assets/layout-segment-context-26rlpk0M.js",
+      "assets/script-Tq3N2sA3.js",
+      "assets/pdfReports-Cpnp89a3.js",
+      "assets/RouteMapModal-CStIt96A.js",
+      "assets/leaflet-src-D6yJ2DYL.js"
+    ],
+    "bytes": 231228,
+    "gzip": 67677
+  }
+}

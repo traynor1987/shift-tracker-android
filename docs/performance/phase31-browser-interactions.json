@@ -1,0 +1,17 @@
+{
+  "environment": "Cloud browser, synthetic real React application",
+  "verified": [
+    "Folded Tasks tap after Shift Actions drawer expanded",
+    "Visible Clock Out control in drawer",
+    "Quick Jobs tab Enter activation",
+    "Tab advances to next visible task control",
+    "Folded125% Tasks category labels without horizontal overflow",
+    "Unfolded125% workspace and quick-job labels without horizontal overflow",
+    "Legacy switch leaves Display settings open",
+    "Legacy preference restored by fresh app load without reseeding",
+    "Original Legacy children have no disclosure wrappers",
+    "Keyboard Space switches Legacy OFF",
+    "Active delivery timer continued 00:05:19 → 00:05:21; shift elapsed 01:00:21"
+  ],
+  "physicalAcceptance": "NOT TESTED"
+}

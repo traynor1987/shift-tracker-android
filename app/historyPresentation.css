@@ -1,0 +1,70 @@
+/* History and saved-shift presentation only. Legacy retains its original stylesheet. */
+.phase3-view .history-page{gap:12px}
+.phase3-view .history-page .page-heading{padding:0;gap:12px}
+.phase3-view .history-page .page-heading h1{font-size:clamp(1.75rem,7vw,2.25rem);line-height:1.1}
+.phase3-view .history-page .page-heading>div>p:last-child{font-size:.8rem;margin-top:5px}
+.phase3-view .history-heading-actions{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:6px!important;width:100%}
+.phase3-view .history-heading-actions button{grid-column:auto!important;min-width:0;min-height:48px!important;padding:8px!important;gap:5px}
+.phase3-view .history-heading-actions button>b{display:none}
+.phase3-view .history-heading-actions button>span{font-size:.65rem;letter-spacing:0;min-width:0;white-space:normal}
+.phase3-view .history-heading-actions button small{font-size:.55rem!important;line-height:1.25}
+.phase3-view .history-control-panel{padding:12px;border-radius:16px;gap:10px;box-shadow:none}
+.phase3-view .history-control-heading{align-items:center;flex-wrap:wrap}
+.phase3-view .history-control-heading strong{font-size:1rem}
+.phase3-view .history-control-heading em{font-size:.65rem;display:block}
+.phase3-view .history-audit{display:none}
+.phase3-view .history-review-wizard-button{min-height:48px;padding:8px 10px;border-radius:10px}
+.phase3-view .history-review-wizard-button>span{width:28px;height:28px;font-size:1rem}
+.phase3-view .history-review-wizard-button b{font-size:.7rem}
+.phase3-view .history-review-wizard-button small{font-size:.6rem}
+.phase3-view .history-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;border-radius:10px}
+.phase3-view .history-filters button{min-height:44px;padding:6px 8px;gap:6px;justify-content:space-between;min-width:0}
+.phase3-view .history-filters button span{white-space:normal;overflow:visible;text-overflow:clip;font-size:.7rem;line-height:1.2}
+.phase3-view .history-filters button b{flex-shrink:0;font-size:.65rem}
+.phase3-view .history-week{border-radius:16px;box-shadow:none}
+.phase3-view .history-week>summary{padding:12px;gap:8px;align-items:center}
+.phase3-view .history-week>summary strong{font-size:1rem}
+.phase3-view .history-week>summary em{font-size:.65rem;line-height:1.4}
+.phase3-view .history-week>summary>b{font-size:.6rem;white-space:nowrap}
+.phase3-view .history-list{gap:0;padding:0 12px 8px}
+.phase3-view .history-card{padding:12px 0;border:0;border-top:1px solid var(--line);border-radius:0;background:var(--surface);box-shadow:none;gap:10px;text-align:left}
+.phase3-view .history-top{gap:8px}
+.phase3-view .history-top strong{font-size:1.1rem;line-height:1.25}
+.phase3-view .history-top small{font-size:.6rem}
+.phase3-view .history-status em{display:block;font-size:.6rem;white-space:normal}
+.phase3-view .history-status i{width:22px;height:22px;font-size:.75rem}
+.phase3-view .history-metrics{padding:8px 0;border-radius:0;background:transparent}
+.phase3-view .history-metrics strong{font-size:1rem}
+.phase3-view .history-metrics small{font-size:.65rem}
+.phase3-view .history-money{padding:8px;border-radius:10px;background:var(--surface-2);gap:6px}
+.phase3-view .history-money small{font-size:.55rem;letter-spacing:0;white-space:normal}
+.phase3-view .history-money strong{font-size:.9rem}
+.phase3-view .history-estimated-total{padding:0;background:transparent}
+.phase3-view .task-outcome-breakdown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.phase3-view .task-outcome-breakdown>span{display:grid;align-content:start;gap:6px;padding:10px;border:1px solid var(--line);border-radius:10px;min-width:0;background:var(--surface-2)}
+.phase3-view .task-outcome-breakdown small{font-size:.6rem;line-height:1.4;overflow-wrap:anywhere;color:var(--muted)}
+.phase3-view .task-outcome-breakdown strong{font-size:1.25rem;font-variant-numeric:tabular-nums}
+.phase3-view .historical-time-total-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.phase3-view .historical-time-total-grid .task-total-card{padding:12px;min-width:0;border-radius:12px}
+.phase3-view .historical-time-total-grid small{font-size:.6rem;line-height:1.4}
+.phase3-view .historical-time-total-grid strong{font-size:1.25rem}
+.phase3-view .historical-time-total-grid em{font-size:.65rem;line-height:1.4}
+.phase3-view .historical-time-total-grid .task-total-free{grid-column:1/-1}
+.phase3-view .historical-report-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.phase3-view .historical-report-stats>div{padding:10px;border-radius:10px;min-width:0}
+.phase3-view .historical-report-stats small{font-size:.65rem;line-height:1.4}
+.phase3-view .historical-report-stats strong{font-size:1.1rem}
+.phase3-view .history-page button:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+@media(min-width:700px){.phase3-view .history-filters{grid-template-columns:repeat(4,minmax(0,1fr))}.phase3-view .history-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px}.phase3-view .historical-time-total-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.phase3-view .historical-time-total-grid .task-total-free{grid-column:auto}.phase3-view .historical-report-stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:360px){.phase3-view .history-heading-actions{grid-template-columns:repeat(2,minmax(0,1fr))!important}.phase3-view .history-heading-actions button:last-child{grid-column:1/-1!important}}
+.phase3-view .history-card .history-top{padding:0}
+.phase3-view .history-card .history-metrics{margin:0;min-height:0}
+.phase3-view .history-card .history-money{margin:0;min-height:0}
+.phase3-view .detail-page .report-page-heading{flex-wrap:wrap;min-width:0;gap:10px}
+.phase3-view .detail-page .report-page-heading>div{min-width:0;max-width:100%}
+.phase3-view .detail-page .report-page-heading h1{font-size:clamp(1.5rem,6vw,2rem);white-space:normal;overflow-wrap:anywhere}
+.phase3-view .detail-page .report-page-heading p{white-space:normal;overflow-wrap:anywhere}
+.phase3-view .detail-page .report-page-heading button{min-width:0;min-height:44px;max-width:100%}
+.phase3-view .detail-page .efficiency-score-badge{min-width:64px;width:auto;flex-shrink:0}
+.phase3-view .detail-page .activity-summary{padding:14px;border-radius:16px;box-shadow:none}
+.phase3-view .detail-page .task-outcome-breakdown>span{padding:8px;gap:4px}

@@ -1,0 +1,2 @@
+CREATE INDEX `hosted_checkpoints_device_created_idx` ON `hosted_checkpoints` (`device_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `shared_reports_device_created_idx` ON `shared_reports` (`device_id`,`created_at`);

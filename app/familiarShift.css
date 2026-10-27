@@ -1,0 +1,99 @@
+/* Actual existing Shift components/styles, with bounded presentation improvements.
+   All additions exclude the user's exact Legacy View. */
+.familiar-shift .phase31-shift-clock{display:grid;gap:2px;text-align:right;font-variant-numeric:tabular-nums;margin-left:auto}
+.familiar-shift .phase31-shift-clock small{font-size:.65rem;font-weight:850}
+.familiar-shift .phase31-shift-clock strong{font-size:clamp(1.3rem,5vw,1.9rem);line-height:1.1}
+.familiar-shift .topbar{height:calc(64px + var(--app-safe-top));gap:8px;padding:calc(8px + var(--app-safe-top)) 12px 8px}
+.familiar-shift .topbar-actions,.familiar-shift .brand-copy small{display:none}
+.familiar-shift .brand-copy strong{font-size:.95rem}
+.familiar-shift .brand-mark{width:32px;height:32px}
+.app-shell.familiar-shift.active-main{height:auto;min-height:100svh;padding-bottom:calc(120px + env(safe-area-inset-bottom));overflow-x:clip}
+.app-shell.familiar-shift.active-main .main-content{height:auto;min-height:0;width:min(100% - 20px,1000px);margin:8px auto 0;padding-bottom:0;overflow:visible}
+.app-shell.familiar-shift.active-main .active-shift-page{height:auto;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:none!important;grid-auto-rows:max-content;gap:6px;align-content:start;padding-bottom:0}
+.app-shell.familiar-shift.active-main .working-card{height:auto;min-height:0;padding:12px;gap:6px}
+.app-shell.familiar-shift.active-main .working-head{gap:8px;align-items:start}
+.app-shell.familiar-shift.active-main .working-head h1{font-size:clamp(2rem,9vw,3rem);line-height:1.1;margin:4px 0}
+.familiar-shift .working-head .time-label,.familiar-shift .working-head .live-wage{display:none!important}
+.familiar-shift .working-head .current-activity-name{font-size:.85rem;line-height:1.25;padding:0;margin:0}
+.familiar-shift .live-stats{margin:4px 0 0!important;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid #ffffff30}
+.familiar-shift .live-stats>div:not([class]){display:none}
+.familiar-shift .live-stats>div,.familiar-shift .live-stats>button{padding:8px 4px!important;gap:3px;min-width:0}
+.familiar-shift .live-stats strong{font-size:1rem;line-height:1.2}
+.familiar-shift .live-stats small{font-size:.6rem;line-height:1.3;white-space:normal}
+.familiar-shift .live-stats em{display:none!important}
+.familiar-shift .shift-reality-button.live{min-height:34px;margin:0;padding:5px 8px}
+.familiar-shift .shift-reality-button.live small{display:none}
+.familiar-shift .tracker-health-strip{margin:0!important;min-height:40px;height:auto;padding:7px 8px;line-height:1.2;font-size:.75rem}
+.app-shell.familiar-shift .delivery-panel{height:auto;min-height:0;grid-template-rows:none!important;grid-auto-rows:max-content;gap:4px;padding:0}
+.familiar-shift .delivery-panel>.section-title{min-height:28px}
+.app-shell.familiar-shift .delivery-buttons button{height:auto;min-height:74px;padding:10px}
+.familiar-shift .run-strip{min-height:0;padding:7px 4px;margin:0;font-size:.75rem}
+.familiar-shift .active-cleaning-summary{height:auto;min-height:44px;padding:8px;margin:0}
+.familiar-shift .active-cleaning-summary strong{font-size:.85rem}
+.familiar-shift .active-cleaning-summary b{font-size:.7rem}
+.app-shell.familiar-shift .delivery-timing-card{height:auto;min-height:0;max-height:none;padding:10px;gap:6px}
+.familiar-shift .hustle-timing-grid[hidden]{display:none!important}
+.familiar-shift .hustle-timing-grid{min-height:0}
+.familiar-shift .hustle-timing-grid strong{font-size:1.1rem;line-height:1.2}
+.familiar-shift .delivery-timing-card .section-title{min-height:0}
+.familiar-shift .delivery-timing-card .section-title h2{display:none}
+.familiar-shift .delivery-timing-card .settings-help{font-size:.75rem;margin:0}
+.familiar-shift .early-dispatch-trigger{min-height:44px;font-size:.7rem;padding:8px}
+.app-shell.familiar-shift .active-delivery-card{height:auto;min-height:0;max-height:none;overflow:visible}
+.familiar-shift .delivery-action-row{position:static;margin:0}
+.familiar-shift .delivery-action-row button{min-height:52px}
+.familiar-shift .bottom-nav{z-index:30}
+.familiar-shift .shift-action-drawer{transform:translateX(-50%)}
+.familiar-shift .shift-action-drawer:not(.open) .shift-action-lip{min-height:44px;padding:6px 12px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.familiar-shift .shift-action-drawer:not(.open) .shift-action-lip>span{display:grid;gap:1px}
+.familiar-shift .shift-action-lip>i{display:none}
+.familiar-shift .shift-action-lip strong{font-size:.75rem}
+.familiar-shift .shift-action-lip small{font-size:.6rem}
+.familiar-shift button:focus-visible,.familiar-shift summary:focus-visible{outline:3px solid var(--double-delivery);outline-offset:2px}
+@media(min-width:760px){.app-shell.familiar-shift .active-shift-page{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.familiar-shift .working-card{grid-column:1;grid-row:1/span 2}.familiar-shift .delivery-panel{grid-column:2;grid-row:1}.familiar-shift .delivery-timing-card{grid-column:2}.familiar-shift .active-cleaning-summary{grid-column:1/-1}}
+
+.familiar-shift .familiar-return-note{font-size:.7rem;line-height:1.3}
+.app-shell.familiar-shift.active-main .working-card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+.familiar-shift .working-head,.familiar-shift .live-stats,.familiar-shift .recent-clockin-cancel,.familiar-shift .familiar-return-note{grid-column:1/-1}
+.app-shell.familiar-shift.active-main .working-head .eyebrow{font-size:.6rem!important;line-height:1.2!important;margin:0;padding:0}
+.app-shell.familiar-shift.active-main .working-head .current-activity-name{font-size:.8rem!important;line-height:1.2!important;margin:0;padding:0}
+.app-shell.familiar-shift.active-main .working-head h1{font-size:clamp(2rem,9vw,3rem)!important;line-height:1.1!important;margin:4px 0}
+.familiar-shift .shift-reality-button.live{min-height:44px;height:auto}
+.familiar-shift .tracker-health-strip{display:grid;min-height:44px;gap:2px;font-size:.65rem;justify-content:start}
+.familiar-shift .active-cleaning-summary{padding:6px 8px!important}
+.familiar-shift .active-cleaning-summary small{font-size:.55rem!important;line-height:1.2!important}
+.familiar-shift .active-cleaning-summary strong{font-size:.75rem!important;line-height:1.2!important}
+.app-shell.familiar-shift .delivery-timing-card .section-title{min-height:0!important;margin:0;gap:6px}
+.app-shell.familiar-shift .hustle-timing-grid>span{padding:6px 4px!important;gap:2px!important;min-width:0}
+.app-shell.familiar-shift .hustle-timing-grid em{font-size:.55rem!important;line-height:1.2!important}
+.app-shell.familiar-shift .hustle-timing-grid strong{font-size:1rem!important;line-height:1.2!important;min-height:0!important}
+.app-shell.familiar-shift.active-main .active-shift-page{gap:4px}
+.app-shell.familiar-shift.active-main .working-head h1{font-size:clamp(1.8rem,9vw,2.5rem)!important}
+.familiar-shift .live-stats small{font-size:.55rem;line-height:1.2;letter-spacing:0}
+.familiar-shift .live-stats strong{font-size:.9rem;line-height:1.2}
+.familiar-shift .shift-reality-button.live span{font-size:.65rem;line-height:1.2}
+.familiar-shift .hustle-timing-grid em{display:none}
+.app-shell.familiar-shift.active-main .shift-action-drawer{transform:translateX(-50%)}
+.app-shell.familiar-shift .hustle-timing-grid>span{height:auto!important;min-height:0!important;grid-template-rows:auto auto!important;align-content:start}
+.app-shell.familiar-shift.active-main .active-shift-page{gap:3px}
+.app-shell.familiar-shift .hustle-timing-grid small{font-size:.55rem!important;line-height:1.2!important;letter-spacing:0}
+.app-shell.familiar-shift .shift-action-drawer:not(.open) .shift-action-lip{min-height:44px;padding:4px 12px}
+.familiar-shift .shift-action-lip strong,.familiar-shift .shift-action-lip small{line-height:1.2}
+.app-shell.familiar-shift .delivery-timing-card{padding:6px;gap:4px}
+.app-shell.familiar-shift.active-main .active-shift-page{gap:2px}
+.app-shell.familiar-shift .active-delivery-card{height:auto!important;min-height:0!important;max-height:none!important}
+.familiar-shift .phase31-secondary summary{min-height:44px;padding:6px 0;line-height:1.2;font-size:.7rem;cursor:pointer}
+.app-shell.familiar-shift .timing-gps-waiting strong{font-size:.7rem!important;line-height:1.2!important;overflow-wrap:anywhere}
+.app-shell.familiar-shift .delivery-action-row button{height:auto!important;min-height:52px!important;font-size:1rem;padding:8px}
+.familiar-shift .undo-delivered-button small{display:none}
+.app-shell.familiar-shift.active-main:has(.has-active-delivery){padding-bottom:calc(80px + env(safe-area-inset-bottom))}
+.familiar-shift .delivery-action-row{display:flex;gap:6px;flex-wrap:wrap}
+.familiar-shift .delivery-action-row button{flex:1;min-width:120px}
+.familiar-shift .early-dispatch-trigger span {white-space:normal;text-overflow:clip;line-height:1.15}
+/* Keep the closed action control beside the content; only the expanded drawer floats. */
+.app-shell.familiar-shift.active-main .shift-action-drawer:not(.open):not(.dragging){position:static!important;left:auto!important;bottom:auto!important;transform:none!important;width:100%;grid-column:1/-1;margin:0}
+.app-shell.familiar-shift.active-main{padding-bottom:calc(80px + env(safe-area-inset-bottom))}
+@media(min-height:900px){
+ .app-shell.familiar-shift.active-main .working-head h1{font-size:clamp(2.5rem,10vw,3.25rem)!important}
+ .app-shell.familiar-shift .hustle-timing-grid strong{font-size:1.3rem!important}
+}

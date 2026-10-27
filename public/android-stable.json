@@ -1,0 +1,17 @@
+{
+  "channel": "stable",
+  "versionName": "2.2.73",
+  "versionCode": 78,
+  "minimumWebVersion": "2.1.149",
+  "apkFile": "Shift-Tracker-2.2.73.apk",
+  "sha256": "f8065898ce11685233c0e76db142ed90c96932551ab9232224dcc0dc2b3a73ac",
+  "releaseNotes": [
+    "Verified native Android and Wear OS update."
+  ],
+  "wear": {
+    "versionName": "2.2.73",
+    "versionCode": 78,
+    "asset": "Shift-Tracker-Wear-2.2.73.apk",
+    "sha256": "2724fb9297eb7bf6a499c2e338da3e71cc1a308d2acc0ca429820065a5dcb26b"
+  }
+}

@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHustleAllowanceCache } from '../lib/hustleAllowanceCache.ts';
+import type { ActivityRecord, Shift } from '../lib/domain.ts';
+const run = (id: string, minute: number) => ({id,type:'single_delivery',start:'2026-10-12T10:00:00Z',end:`2026-10-12T10:${minute}:00Z`,storeExitAt:'2026-10-12T10:01:00Z',storeEntryAt:'2026-10-12T10:10:00Z',storeExitObserved:true,storeEntryObserved:true}) as ActivityRecord;
+test('allowance cache reuses cloned history but invalidates edited timing, exclusion and periods', () => {
+ const cache=createHustleAllowanceCache();
+ const target=run('target',20), history=[{activities:[run('old',12)]}] as Shift[];
+ const first=cache(history,target,'real');
+ assert.equal(first.returnMs,120000);
+ assert.equal(cache(structuredClone(history),target,'real'),first);
+ history[0].activities![0].end='2026-10-12T10:13:00Z';
+ assert.equal(cache(history,target,'real').returnMs,180000);
+ history[0].activities![0].badDelivery=true;
+ assert.equal(cache(history,target,'real').returnMs,null);
+ history[0].activities![0].badDelivery=false;
+ const next={...target,start:'2026-10-19T10:00:00Z'};
+ assert.equal(cache(history,next,'real').returnMs,null);
+ assert.equal(cache(history,target,'real').returnMs,180000);
+});

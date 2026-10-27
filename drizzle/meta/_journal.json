@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787699851952,
+      "tag": "0000_late_thunderbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787700072688,
+      "tag": "0001_nasty_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790760561216,
+      "tag": "0002_reflective_roland_deschain",
+      "breakpoints": true
+    }
+  ]
+}

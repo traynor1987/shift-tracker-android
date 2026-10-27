@@ -1,0 +1,78 @@
+{
+  "node": "v24.19.0",
+  "rows": [
+    {
+      "version": "before",
+      "mode": "offline",
+      "probes": 20,
+      "requests": 0,
+      "successful": 0,
+      "clearedTimers": 0,
+      "elapsedMs": 0.13589500000000498
+    },
+    {
+      "version": "before",
+      "mode": "weak",
+      "probes": 20,
+      "requests": 20,
+      "successful": 0,
+      "clearedTimers": 20,
+      "elapsedMs": 0.4660829999999123
+    },
+    {
+      "version": "before",
+      "mode": "interrupted",
+      "probes": 20,
+      "requests": 20,
+      "successful": 0,
+      "clearedTimers": 20,
+      "elapsedMs": 0.9346490000000358
+    },
+    {
+      "version": "before",
+      "mode": "healthy",
+      "probes": 20,
+      "requests": 20,
+      "successful": 20,
+      "clearedTimers": 20,
+      "elapsedMs": 0.09183900000004996
+    },
+    {
+      "version": "after",
+      "mode": "offline",
+      "probes": 20,
+      "requests": 0,
+      "successful": 0,
+      "clearedTimers": 0,
+      "elapsedMs": 0.0658490000000711
+    },
+    {
+      "version": "after",
+      "mode": "weak",
+      "probes": 20,
+      "requests": 20,
+      "successful": 0,
+      "clearedTimers": 20,
+      "elapsedMs": 0.2820650000001024
+    },
+    {
+      "version": "after",
+      "mode": "interrupted",
+      "probes": 20,
+      "requests": 20,
+      "successful": 0,
+      "clearedTimers": 20,
+      "elapsedMs": 0.39565700000002835
+    },
+    {
+      "version": "after",
+      "mode": "healthy",
+      "probes": 20,
+      "requests": 20,
+      "successful": 20,
+      "clearedTimers": 20,
+      "elapsedMs": 0.08334499999989475
+    }
+  ],
+  "scope": "Actual existing production connection probe, controlled offline/rejected-request/timeout/204 responses. Timings are JavaScript harness execution, not radio/network latency. No connectivity behavior change or speed improvement claimed. Local GPS persistence/recovery is benchmarked separately without network calls."
+}

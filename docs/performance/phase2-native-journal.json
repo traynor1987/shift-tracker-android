@@ -1,0 +1,1 @@
+{"storage":"deterministic UTF8 fake snapshot; no Android crypto/fsync", "initialRows":1000,"appends":100,"acks":100,"baseline":{"reads":400,"decodedRows":420000,"writes":200,"elapsedNs":211117534},"optimized":{"reads":1,"decodedRows":1000,"writes":200,"elapsedNs":18820149}}
