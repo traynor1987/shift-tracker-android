@@ -1,0 +1,83 @@
+From 1ebb0aaf6240d5e2d3d844d6a0c5b68c67af0219 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Tue, 27 Oct 2026 01:06:39 +0100
+Subject: [PATCH] Add backward-compatible shift store identity foundation
+
+---
+ lib/backup.ts               |  1 +
+ lib/domain.ts               |  8 ++++++--
+ tests/storeIdentity.test.ts | 20 ++++++++++++++++++++
+ 3 files changed, 27 insertions(+), 2 deletions(-)
+ create mode 100644 tests/storeIdentity.test.ts
+
+diff --git a/lib/backup.ts b/lib/backup.ts
+index cc28afc..36ecc4c 100644
+--- a/lib/backup.ts
++++ b/lib/backup.ts
+@@ -283,6 +283,7 @@ function validateTask(task: unknown, path: string, context: ValidationContext, s
+ function validateShift(shift: unknown, index: number, context: ValidationContext) {
+   const path = `shifts[${index}]`;
+   if (!isRecord(shift)) return addIssue(context, path, "invalid shift record");
++  if (shift.storeId !== undefined && !oneOf(shift.storeId, ["ormskirk", "maghull"])) addIssue(context, `${path}.storeId`, "invalid store identity");
+   if (!stringValue(shift.id) || !shift.id || !oneOf(shift.status, ["working", "break", "completed"]) || !validDate(shift.clockIn) || !validNullableDate(shift.clockOut) || (shift.createdAt !== undefined && !validDate(shift.createdAt)) || (shift.updatedAt !== undefined && !validDate(shift.updatedAt))) addIssue(context, path, "invalid shift identity, status or timestamps");
+   if (shift.status === "completed" && !validDate(shift.clockOut)) addIssue(context, `${path}.clockOut`, "completed shift is missing clock-out");
+   if (validDate(shift.clockIn) && validDate(shift.clockOut) && Date.parse(shift.clockOut as string) <= Date.parse(shift.clockIn as string)) addIssue(context, path, "clock-out must be after clock-in");
+diff --git a/lib/domain.ts b/lib/domain.ts
+index 45eebb3..3328e99 100644
+--- a/lib/domain.ts
++++ b/lib/domain.ts
+@@ -471,7 +471,11 @@ export interface PendingBlockedTimeResume {
+   note?: string;
+ }
+ 
++export type StoreId = "ormskirk" | "maghull";
++
+ export interface Shift {
++  /** Absent on older records; do not rewrite their original evidence. */
++  storeId?: StoreId;
+   id: string;
+   status: ShiftStatus;
+   clockIn: string;
+@@ -2538,11 +2542,11 @@ export function snapshotPreparationTasks(rota: CleaningTaskDefinition[]): ShiftT
+   }));
+ }
+ 
+-export function createShift(settings: Settings, now = new Date(), mileageChoice?: MileageMethod, role: ShiftRole = "other", rota: CleaningTaskDefinition[] = CLEANING_ROTA, preparationRota: CleaningTaskDefinition[] = PREPARATION_ROTA): Shift {
++export function createShift(settings: Settings, now = new Date(), mileageChoice?: MileageMethod, role: ShiftRole = "other", rota: CleaningTaskDefinition[] = CLEANING_ROTA, preparationRota: CleaningTaskDefinition[] = PREPARATION_ROTA, storeId: StoreId = "ormskirk"): Shift {
+   const mileageMethod: MileageMethod = mileageChoice ?? (settings.mileagePreference === "odometer" ? "odometer" : "direct");
+   const iso = now.toISOString();
+   return {
+-    id: makeId(), status: "working", clockIn: iso, clockOut: null, breaks: [], deliveries: [],
++    id: makeId(), storeId, status: "working", clockIn: iso, clockOut: null, breaks: [], deliveries: [],
+     mileage: { method: mileageMethod, startTenths: null, endTenths: null, directTenths: null },
+     hourlyRatePence: settings.hourlyRatePence,
+     singleRatePence: settings.singleRatePence,
+diff --git a/tests/storeIdentity.test.ts b/tests/storeIdentity.test.ts
+new file mode 100644
+index 0000000..dfcfb68
+--- /dev/null
++++ b/tests/storeIdentity.test.ts
+@@ -0,0 +1,20 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { createShift, emptyData, repairShiftActivityIds, CLEANING_ROTA, PREPARATION_ROTA } from '../lib/domain.ts';
++import { createBackupDocument, validateBackupDocument, applyValidatedBackup } from '../lib/backup.ts';
++
++test('new shifts default to Ormskirk and can carry a cover-store identity', () => {
++  const data = emptyData();
++  assert.equal(createShift(data.settings).storeId, 'ormskirk');
++  const cover = createShift(data.settings, new Date('2026-10-29T11:00:00Z'), undefined, 'other', CLEANING_ROTA, PREPARATION_ROTA, 'maghull');
++  assert.equal(cover.storeId, 'maghull');
++});
++
++test('backup validates and retains a cover-store identity', () => {
++  const data = emptyData();
++  const shift = repairShiftActivityIds(createShift(data.settings, new Date('2026-10-29T11:00:00Z'), undefined, 'other', CLEANING_ROTA, PREPARATION_ROTA, 'maghull'));
++  data.shifts.push(shift);
++  const result = validateBackupDocument(createBackupDocument(data, '2.1.246'));
++  assert.equal(result.ok, true);
++  if (result.ok) assert.equal(applyValidatedBackup(emptyData(), result, true).shifts[0].storeId, 'maghull');
++});
+-- 
+2.51.1
+
