@@ -59,7 +59,7 @@ class AndroidApkUpdateManager(
                 val remote = discoverRelease(selectedChannel)
                 prefs.edit().putLong(LAST_SUCCESSFUL_CHECK, System.currentTimeMillis()).apply()
                 val compatible = ApkUpdatePolicy.compatibleWithWeb(installedWebVersion, remote.metadata.minimumWebVersion)
-                candidate = remote
+                candidate = remote.takeIf { compatible }
                 status(if (ApkUpdatePolicy.isNewer(remote.metadata.versionCode, installedVersionCode()) && compatible) "available" else if (!compatible) "web_refresh_required" else "up_to_date")
                     .put("channel", selectedChannel).put("latestVersion", remote.metadata.versionName)
                     .put("latestVersionCode", remote.metadata.versionCode)

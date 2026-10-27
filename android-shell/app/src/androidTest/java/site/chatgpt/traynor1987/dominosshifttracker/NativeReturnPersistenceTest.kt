@@ -62,6 +62,11 @@ class NativeReturnPersistenceTest {
         mirror(profile=maghull(true,"revised-proof"))
         assertFalse(NativeReturnObserver.hasReturn(context,"synthetic-delivery",7))
     }
+    @Test fun lateOldProfileCallbackCannotConfirmSelectedStore() {
+        mirror(profile=maghull(true))
+        assertNull(NativeReturnObserver(context).observe(point(),7,NativeStoreProfile.ORMSKIRK.identity))
+        assertFalse(NativeReturnObserver.hasReturn(context,"synthetic-delivery",7))
+    }
     @Test fun protectedStoreRejectsCoordinateOverride() {
         assertEquals(NativeStoreProfile.ORMSKIRK, NativeStoreProfile.parse(JSONObject().put("id","ormskirk").put("latitude",0)))
         assertNull(NativeStoreProfile.parse(JSONObject().put("id","maghull")))

@@ -578,6 +578,7 @@ class DeliveryLocationService : Service() {
         val journalToken = sessionGate.current ?: return
         val receivedElapsedMs = SystemClock.elapsedRealtime()
         val observationGeneration = activeCommandToken?.generation ?: return
+        val observationStoreIdentity = sessionStoreIdentity
         journalExecutor.execute {
             if (!sessionGate.isCurrent(journalToken) || sessionStoreIdentity != NativeShiftState.storeProfile(this)?.identity) return@execute
             val result = sampleStore.append(sample)
@@ -585,7 +586,7 @@ class DeliveryLocationService : Service() {
             // Native observation and persistence do not wait on bridge dispatch or React.
             val observation = synchronized(sessionGate) {
                 if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken) && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity)
-                    returnObserver.observe(sample, observationGeneration) else null
+                    returnObserver.observe(sample, observationGeneration, observationStoreIdentity) else null
             }
             if (observation != null) dispatchHandler.post {
                 if (sessionGate.isCurrent(journalToken) && running && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity) {

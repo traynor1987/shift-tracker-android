@@ -11,8 +11,9 @@ class NativeReturnObserver(private val context: Context) {
     private var policy = NativeReturnPolicy()
     private var saved = JSONObject()
 
-    fun observe(sample: NativeLocationSample, generation: Long): JSONObject? {
+    fun observe(sample: NativeLocationSample, generation: Long, expectedStoreIdentity: String? = null): JSONObject? {
         val profile = NativeShiftState.storeProfile(context)?.takeIf { it.verified } ?: return null
+        if (expectedStoreIdentity != null && expectedStoreIdentity != profile.identity) return null
         val snapshot = NativeShiftState.read(context) ?: return null
         if (!snapshot.shiftActive || snapshot.isStale || snapshot.activityId != sample.deliveryId ||
             snapshot.activity !in setOf("delivery_single", "delivery_double")) return null
