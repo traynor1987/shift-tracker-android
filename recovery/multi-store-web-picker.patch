@@ -1,0 +1,258 @@
+From 1ebb0aaf6240d5e2d3d844d6a0c5b68c67af0219 Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Tue, 27 Oct 2026 01:06:39 +0100
+Subject: [PATCH 1/2] Add backward-compatible shift store identity foundation
+
+---
+ lib/backup.ts               |  1 +
+ lib/domain.ts               |  8 ++++++--
+ tests/storeIdentity.test.ts | 20 ++++++++++++++++++++
+ 3 files changed, 27 insertions(+), 2 deletions(-)
+ create mode 100644 tests/storeIdentity.test.ts
+
+diff --git a/lib/backup.ts b/lib/backup.ts
+index cc28afc..36ecc4c 100644
+--- a/lib/backup.ts
++++ b/lib/backup.ts
+@@ -283,6 +283,7 @@ function validateTask(task: unknown, path: string, context: ValidationContext, s
+ function validateShift(shift: unknown, index: number, context: ValidationContext) {
+   const path = `shifts[${index}]`;
+   if (!isRecord(shift)) return addIssue(context, path, "invalid shift record");
++  if (shift.storeId !== undefined && !oneOf(shift.storeId, ["ormskirk", "maghull"])) addIssue(context, `${path}.storeId`, "invalid store identity");
+   if (!stringValue(shift.id) || !shift.id || !oneOf(shift.status, ["working", "break", "completed"]) || !validDate(shift.clockIn) || !validNullableDate(shift.clockOut) || (shift.createdAt !== undefined && !validDate(shift.createdAt)) || (shift.updatedAt !== undefined && !validDate(shift.updatedAt))) addIssue(context, path, "invalid shift identity, status or timestamps");
+   if (shift.status === "completed" && !validDate(shift.clockOut)) addIssue(context, `${path}.clockOut`, "completed shift is missing clock-out");
+   if (validDate(shift.clockIn) && validDate(shift.clockOut) && Date.parse(shift.clockOut as string) <= Date.parse(shift.clockIn as string)) addIssue(context, path, "clock-out must be after clock-in");
+diff --git a/lib/domain.ts b/lib/domain.ts
+index 45eebb3..3328e99 100644
+--- a/lib/domain.ts
++++ b/lib/domain.ts
+@@ -471,7 +471,11 @@ export interface PendingBlockedTimeResume {
+   note?: string;
+ }
+ 
++export type StoreId = "ormskirk" | "maghull";
++
+ export interface Shift {
++  /** Absent on older records; do not rewrite their original evidence. */
++  storeId?: StoreId;
+   id: string;
+   status: ShiftStatus;
+   clockIn: string;
+@@ -2538,11 +2542,11 @@ export function snapshotPreparationTasks(rota: CleaningTaskDefinition[]): ShiftT
+   }));
+ }
+ 
+-export function createShift(settings: Settings, now = new Date(), mileageChoice?: MileageMethod, role: ShiftRole = "other", rota: CleaningTaskDefinition[] = CLEANING_ROTA, preparationRota: CleaningTaskDefinition[] = PREPARATION_ROTA): Shift {
++export function createShift(settings: Settings, now = new Date(), mileageChoice?: MileageMethod, role: ShiftRole = "other", rota: CleaningTaskDefinition[] = CLEANING_ROTA, preparationRota: CleaningTaskDefinition[] = PREPARATION_ROTA, storeId: StoreId = "ormskirk"): Shift {
+   const mileageMethod: MileageMethod = mileageChoice ?? (settings.mileagePreference === "odometer" ? "odometer" : "direct");
+   const iso = now.toISOString();
+   return {
+-    id: makeId(), status: "working", clockIn: iso, clockOut: null, breaks: [], deliveries: [],
++    id: makeId(), storeId, status: "working", clockIn: iso, clockOut: null, breaks: [], deliveries: [],
+     mileage: { method: mileageMethod, startTenths: null, endTenths: null, directTenths: null },
+     hourlyRatePence: settings.hourlyRatePence,
+     singleRatePence: settings.singleRatePence,
+diff --git a/tests/storeIdentity.test.ts b/tests/storeIdentity.test.ts
+new file mode 100644
+index 0000000..dfcfb68
+--- /dev/null
++++ b/tests/storeIdentity.test.ts
+@@ -0,0 +1,20 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { createShift, emptyData, repairShiftActivityIds, CLEANING_ROTA, PREPARATION_ROTA } from '../lib/domain.ts';
++import { createBackupDocument, validateBackupDocument, applyValidatedBackup } from '../lib/backup.ts';
++
++test('new shifts default to Ormskirk and can carry a cover-store identity', () => {
++  const data = emptyData();
++  assert.equal(createShift(data.settings).storeId, 'ormskirk');
++  const cover = createShift(data.settings, new Date('2026-10-29T11:00:00Z'), undefined, 'other', CLEANING_ROTA, PREPARATION_ROTA, 'maghull');
++  assert.equal(cover.storeId, 'maghull');
++});
++
++test('backup validates and retains a cover-store identity', () => {
++  const data = emptyData();
++  const shift = repairShiftActivityIds(createShift(data.settings, new Date('2026-10-29T11:00:00Z'), undefined, 'other', CLEANING_ROTA, PREPARATION_ROTA, 'maghull'));
++  data.shifts.push(shift);
++  const result = validateBackupDocument(createBackupDocument(data, '2.1.246'));
++  assert.equal(result.ok, true);
++  if (result.ok) assert.equal(applyValidatedBackup(emptyData(), result, true).shifts[0].storeId, 'maghull');
++});
+-- 
+2.51.1
+
+
+From 377146a70c53dc31699ec372bb4ba4f19d18300e Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Tue, 27 Oct 2026 01:12:05 +0100
+Subject: [PATCH 2/2] Wire store picker into clock in with provisional Maghull
+ GPS isolation
+
+---
+ components/ShiftTrackerApp.tsx       | 17 ++++++++++++++++-
+ lib/domain.ts                        |  1 +
+ lib/storeProfiles.ts                 | 20 ++++++++++++++++++++
+ tests/storePickerIntegration.test.ts | 14 ++++++++++++++
+ tests/storeProfiles.test.ts          | 22 ++++++++++++++++++++++
+ 5 files changed, 73 insertions(+), 1 deletion(-)
+ create mode 100644 lib/storeProfiles.ts
+ create mode 100644 tests/storePickerIntegration.test.ts
+ create mode 100644 tests/storeProfiles.test.ts
+
+diff --git a/components/ShiftTrackerApp.tsx b/components/ShiftTrackerApp.tsx
+index fb16189..5955c80 100644
+--- a/components/ShiftTrackerApp.tsx
++++ b/components/ShiftTrackerApp.tsx
+@@ -1,4 +1,5 @@
+ "use client";
++import { settingsForStore } from "../lib/storeProfiles";
+ /* Domino's is a product name used repeatedly in visible JSX copy. */
+ /* eslint-disable react/no-unescaped-entities */
+ 
+@@ -924,7 +925,9 @@ async function resizeAddressImage(file: File): Promise<string> {
+ }
+ 
+ export default function ShiftTrackerApp() {
+-  const [data, setData] = useState<AppData>(emptyData);
++  const [storedData, setData] = useState<AppData>(emptyData);
++  const currentStore = storedData.shifts.find(item => item.status !== "completed")?.storeId ?? "ormskirk";
++  const data = useMemo(() => currentStore === "maghull" ? { ...storedData, settings: settingsForStore(storedData.settings, currentStore) } : storedData, [storedData, currentStore]);
+   const lastCommittedDataRef = useRef(data);
+   lastCommittedDataRef.current = data;
+   const historicalRepairRef = useRef(createHistoricalRepair());
+@@ -2992,6 +2995,7 @@ export default function ShiftTrackerApp() {
+       };
+     };
+     const latestData = lastCommittedDataRef.current;
++    if (latestData.shifts.find(item => item.status !== "completed")?.storeId === "maghull") return finish(false);
+     const settings = latestData.settings;
+     const currentActive = latestData.shifts.find(
+       (shift) => shift.status !== "completed",
+@@ -3955,6 +3959,7 @@ export default function ShiftTrackerApp() {
+         role,
+         data.cleaningRota,
+         data.preparationRota,
++        data.settings.nextStoreId === "maghull" ? "maghull" : "ormskirk",
+       ),
+     );
+     if (approval) shift.clockInApproval = approval;
+@@ -3978,6 +3983,7 @@ export default function ShiftTrackerApp() {
+           );
+       }
+       draft.shifts.push(shift);
++      draft.settings.nextStoreId = "ormskirk";
+     });
+     if (
+       data.settings.locationAssistEnabled &&
+@@ -8715,6 +8721,14 @@ export default function ShiftTrackerApp() {
+             }}
+           />
+         ) : page === "shift" ? (
++          <>
++          {!active ? <label className="panel" style={{display: "flex", alignItems: "center", gap: 12, padding: 12}}>
++            <strong>Store</strong>
++            <select aria-label="Store for next shift" value={data.settings.nextStoreId ?? "ormskirk"} onChange={event => { const value = event.target.value; commit(draft => { if (draft.shifts.some(item => item.status !== "completed")) return false; draft.settings.nextStoreId = value === "maghull" ? "maghull" : "ormskirk"; }); }}>
++              <option value="ormskirk">Ormskirk · Home Store</option>
++              <option value="maghull">Maghull · Cover Store</option>
++            </select>
++          </label> : <p className="eyebrow" role="status">{active.storeId === "maghull" ? "Maghull · GPS calibration pending · automatic GPS actions off" : "Ormskirk · Home Store"}</p>}
+           <ActiveShift
+             data={data}
+             shift={active}
+@@ -8799,6 +8813,7 @@ export default function ShiftTrackerApp() {
+             rotaMessage={rotaPrompt.message}
+             onOpenRota={() => openRota(rotaPrompt.offset)}
+           />
++          </>
+         ) : page === "tasks" ? (
+           <TasksPage key="tasks-page"
+             data={data}
+diff --git a/lib/domain.ts b/lib/domain.ts
+index 3328e99..79e7a2c 100644
+--- a/lib/domain.ts
++++ b/lib/domain.ts
+@@ -591,6 +591,7 @@ export interface OSMRoadFeatureSettings {
+ }
+ 
+ export interface Settings {
++  nextStoreId?: StoreId;
+   hourlyRatePence: number;
+   singleRatePence: number;
+   doubleRatePence: number;
+diff --git a/lib/storeProfiles.ts b/lib/storeProfiles.ts
+new file mode 100644
+index 0000000..bdf166e
+--- /dev/null
++++ b/lib/storeProfiles.ts
+@@ -0,0 +1,20 @@
++import type { Settings, Shift, StoreId } from './domain.ts';
++
++export const STORES = {
++  ormskirk: { name: 'Ormskirk', role: 'Home Store' },
++  maghull: { name: 'Maghull', role: 'Cover Store', latitude: 53.516605, longitude: -2.943185 },
++} as const;
++export type StoreFilter = 'all' | StoreId;
++/** Older records remain unattributed: their evidence is never rewritten. */
++export function filterStoreShifts(shifts: Shift[], filter: StoreFilter): Shift[] {
++  return filter === 'all' ? shifts : shifts.filter(shift => shift.storeId === filter);
++}
++/** Provisional cover-store sessions must never borrow home-store automation. */
++export function settingsForStore(settings: Settings, storeId: StoreId): Settings {
++  if (storeId === 'ormskirk') return settings;
++  return { ...settings, locationAssistEnabled: false, alwaysOnShiftMonitoring: false, recordDeliveryRoutes: false, automaticDispatchTimer: false,
++    carryoutDepartureAssistEnabled: false, carryoutDepartureZone: null,
++    storePresenceProofEnabled: false, storePresenceStartProofEnabled: false,
++    storeDisplayLatitude: STORES.maghull.latitude, storeDisplayLongitude: STORES.maghull.longitude,
++    storeDisplayLabel: "Domino's Pizza — Liverpool — Maghull" };
++}
+diff --git a/tests/storePickerIntegration.test.ts b/tests/storePickerIntegration.test.ts
+new file mode 100644
+index 0000000..5ed9dc5
+--- /dev/null
++++ b/tests/storePickerIntegration.test.ts
+@@ -0,0 +1,14 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++const source = readFileSync(new URL('../components/ShiftTrackerApp.tsx', import.meta.url), 'utf8');
++test('clock-in picker is locked out during a shift and resets to home after creation', () => {
++ assert.match(source, /aria-label="Store for next shift"/);
++ assert.match(source, /if \(draft.shifts.some\(item => item.status !== "completed"\)\) return false/);
++ assert.match(source, /draft.settings.nextStoreId = "ormskirk"/);
++ assert.match(source, /data.settings.nextStoreId === "maghull" \? "maghull" : "ormskirk"/);
++});
++test('active cover-store rendering projects safe settings and rejects stale GPS samples', () => {
++ assert.match(source, /settingsForStore\(storedData.settings, currentStore\)/);
++ assert.match(source, /storeId === "maghull"\) return finish\(false\)/);
++});
+diff --git a/tests/storeProfiles.test.ts b/tests/storeProfiles.test.ts
+new file mode 100644
+index 0000000..4210d09
+--- /dev/null
++++ b/tests/storeProfiles.test.ts
+@@ -0,0 +1,22 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { emptyData, createShift } from '../lib/domain.ts';
++import { filterStoreShifts, settingsForStore } from '../lib/storeProfiles.ts';
++test('provisional Maghull cannot inherit Ormskirk automation or mutate home calibration', () => {
++ const home = emptyData().settings; const original = structuredClone(home);
++ const cover = settingsForStore(home, 'maghull');
++ assert.equal(cover.locationAssistEnabled, false);
++ assert.equal(cover.alwaysOnShiftMonitoring, false);
++ assert.equal(cover.carryoutDepartureAssistEnabled, false);
++ assert.equal(cover.carryoutDepartureZone, null);
++ assert.deepEqual(home, original);
++ assert.equal(settingsForStore(home, 'ormskirk'), home);
++});
++test('store filters preserve all records and do not guess historical attribution', () => {
++ const shift = createShift(emptyData().settings); const old = structuredClone(shift); delete old.storeId;
++ const cover = { ...structuredClone(shift), storeId: 'maghull' as const };
++ const shifts = [shift, old, cover];
++ assert.equal(filterStoreShifts(shifts, 'all'), shifts);
++ assert.deepEqual(filterStoreShifts(shifts, 'maghull'), [cover]);
++ assert.deepEqual(filterStoreShifts(shifts, 'ormskirk'), [shift]);
++});
+-- 
+2.51.1
+
