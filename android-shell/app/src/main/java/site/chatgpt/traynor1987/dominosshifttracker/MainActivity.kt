@@ -558,6 +558,17 @@ class MainActivity : ComponentActivity() {
                 val sampleId = message.optString("sampleId").trim()
                 if (sampleId.isNotEmpty() && sampleId.length <= 256) DeliveryLocationService.acknowledgePendingSample(this, sampleId)
             }
+            "shift_tracker_native_return:ack" -> {
+                // Receipt only: the PWA has durably reconciled this observation.
+                // This message never completes a delivery or discards its route.
+                val eventId = message.optString("eventId").trim()
+                if (eventId.isNotEmpty() && eventId.length <= 256)
+                    DeliveryLocationService.acknowledgeReturnEvent(this, eventId)
+            }
+            "shift_tracker_location:drain" -> DeliveryLocationService.requestDrain(
+                this, message.optString("requestId"), message.optString("shiftId"),
+                message.optString("deliveryId"),
+            )
         }
     }
 
