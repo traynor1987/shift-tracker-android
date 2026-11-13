@@ -20,8 +20,8 @@ android {
         applicationId = "site.chatgpt.traynor1987.dominosshifttracker.stable"
         minSdk = 30
         targetSdk = 35
-        versionCode = 80
-        versionName = "2.2.75"
+        versionCode = 81
+        versionName = "2.2.76"
     }
     signingConfigs {
         if (releaseSigningReady) create("shiftTrackerRelease") {

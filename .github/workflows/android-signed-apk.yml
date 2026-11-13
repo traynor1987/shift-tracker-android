@@ -11,7 +11,7 @@ on:
       minimum_web_version:
         description: "Minimum compatible Shift Tracker Web App version"
         required: true
-        default: "2.1.149"
+        default: "2.1.251"
         type: string
       release_notes:
         description: "Short public release notes"
@@ -131,6 +131,11 @@ jobs:
           sha256sum "$APK" > "$APK.sha256"
           cat "$APK.sha256"
 
+      - name: Verify production signing continuity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-signing-continuity.sh
+
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
@@ -147,8 +152,8 @@ jobs:
         id: release_assets
         shell: bash
         env:
-          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.149' }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Verified native Android and Wear OS update.' }}
+          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.251' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending.' }}
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
@@ -200,7 +205,7 @@ jobs:
   publish-stable-release:
     name: Publish verified public stable release
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
-    needs: build-signed-apk
+    needs: [build-signed-apk, verify-native-return]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -233,15 +238,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_NAME: ${{ needs.build-signed-apk.outputs.version_name }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Verified native Android and Wear OS update.' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending.' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_NOTES"
-          gh release create "v$VERSION_NAME" release-bundle/Shift-Tracker-"$VERSION_NAME".apk release-bundle/Shift-Tracker-Wear-*.apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --title "Shift Tracker Android $VERSION_NAME" --notes "$RELEASE_NOTES" --latest
+          gh release create "v$VERSION_NAME" release-bundle/Shift-Tracker-"$VERSION_NAME".apk release-bundle/Shift-Tracker-Wear-*.apk release-bundle/shift-tracker-android-release.json --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Shift Tracker Android $VERSION_NAME" --notes "$RELEASE_NOTES" --latest
 
 
   verify-native-return:
-    if: github.ref == 'refs/heads/feat/shift-monitor-native-return-2026-10-22'
     uses: ./.github/workflows/native-return-instrumentation.yml
 
   publish-return-candidate:
