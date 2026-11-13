@@ -214,6 +214,17 @@ function validateActivity(activity: unknown, path: string, shiftId: string, deli
   ["storeExitAt", "storeEntryAt", "storeReturnConfirmedAt", "backAtStoreAt", "dominosStoreExitAt", "dominosStoreEntryAt", "dominosDispatchStartedAt", "dominosGeofenceExitedAt", "realDeliveryStartedAt", "realGeofenceExitedAt"].forEach((key) => { if (activity[key] !== undefined && !validNullableDate(activity[key])) addIssue(context, `${path}.${key}`, "invalid Hustle timestamp"); });
   ["geofenceLatitude", "geofenceLongitude", "geofenceRadius", "locationAccuracy", "dominosGeofenceLatitude", "dominosGeofenceLongitude", "dominosGeofenceRadius"].forEach((key) => { if (activity[key] != null && !finite(activity[key])) addIssue(context, `${path}.${key}`, "expected a numeric location value"); });
   ["earlyDispatchGapSeconds", "dominosHustleSeconds", "realHustleSeconds"].forEach((key) => { if (activity[key] != null && !nonNegative(activity[key])) addIssue(context, `${path}.${key}`, "expected a non-negative duration"); });
+  if (activity.nativeReturnEvidence !== undefined) {
+    const evidence = activity.nativeReturnEvidence;
+    if (!isRecord(evidence) || !stringValue(evidence.eventId) || !evidence.eventId || evidence.eventId.length > 256 ||
+        !integer(evidence.generation) || !Number.isSafeInteger(evidence.generation) || evidence.generation < 0 || !oneOf(evidence.storeId, ["ormskirk", "maghull"]) ||
+        !stringValue(evidence.storeRevision) || !evidence.storeRevision || evidence.storeRevision.length > 512 ||
+        !integer(evidence.timestampEpochMs) || evidence.timestampEpochMs <= 0 || evidence.timestampEpochMs > 8.64e15 ||
+        !integer(evidence.observedAtEpochMs) || evidence.observedAtEpochMs <= 0 || evidence.observedAtEpochMs > evidence.timestampEpochMs ||
+        !integer(evidence.notificationAt) || evidence.notificationAt < 0 || evidence.notificationAt > 8.64e15 ||
+        (evidence.notificationAt !== 0 && evidence.notificationAt < evidence.timestampEpochMs))
+      addIssue(context, `${path}.nativeReturnEvidence`, "invalid native return evidence");
+  }
   if (activity.storePresenceProof !== undefined) {
     const proof = activity.storePresenceProof;
     if (!isRecord(proof) || proof.version !== 1 || !optionalBoolean(proof.enabledAtStart) || !optionalBoolean(proof.startEnabledAtStart) || !integer(proof.radiusMetres) || Number(proof.radiusMetres) < 5 || Number(proof.radiusMetres) > 15 || !finite(proof.latitude) || !finite(proof.longitude) || !Array.isArray(proof.changes) || proof.changes.length > 24 || !proof.changes.every((item) => isRecord(item) && validDate(item.at) && optionalBoolean(item.enabled))) addIssue(context, `${path}.storePresenceProof`, "invalid store-presence proof");

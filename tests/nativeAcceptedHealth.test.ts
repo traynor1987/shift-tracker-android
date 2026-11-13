@@ -1,3 +1,4 @@
+import { settingsForStore } from '../lib/storeProfiles.ts';
 import { returnEligibility } from "../lib/returnEligibility.ts";
 import { traceReturn } from "../lib/returnDiagnostics.ts";
 import test from 'node:test';
@@ -23,7 +24,7 @@ test('actual ingestion reads canonical session before queued old callback can mu
  const visit=(node:ts.Node)=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='applyLocationReading')body=node.initializer!.getText(ast);ts.forEachChild(node,visit);};visit(ast);
  const stale=emptyData(),latest=emptyData();for(const [data,id] of [[stale,'A'],[latest,'B']] as const){const shift=createShift(data.settings,new Date('2026-10-13T10:00:00Z'));shift.activities=[{id,shiftId:shift.id,type:'single_delivery',start:'2026-10-13T10:10:00Z',end:null} as ActivityRecord];data.shifts=[shift];}
  const original=JSON.stringify(latest);let writes=0;
- const context=vm.createContext({traceReturn,returnEligibility,data:stale,lastCommittedDataRef:{current:latest},nativeUnpersistedSampleIdsRef:{current:new Set()},appendDeveloperLog:()=>{},commit:async()=>{writes++;return {status:'persisted'};}});
+ const context=vm.createContext({settingsForStore,traceReturn,returnEligibility,data:stale,lastCommittedDataRef:{current:latest},nativeUnpersistedSampleIdsRef:{current:new Set()},appendDeveloperLog:()=>{},commit:async()=>{writes++;return {status:'persisted'};}});
  vm.runInContext(ts.transpileModule(`globalThis.run=(${body});`,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText,context);
  const result=await context.run({timestamp:Date.parse('2026-10-13T10:15:00Z'),coords:{latitude:0,longitude:0,accuracy:5}},'A','old');
  assert.equal(result.accepted,false);assert.equal(writes,0);assert.equal(JSON.stringify(latest),original);

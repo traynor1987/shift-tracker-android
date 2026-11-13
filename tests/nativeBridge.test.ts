@@ -383,3 +383,22 @@ test("capability-aware explicit stop-all preserves targeted and older-shell comp
   assert.ok(readNativeShellInfo(event({...ready,shellVersion:"2.2.70",diagnostics:{}})));
   stopNativeDeliveryTracking();assert.equal(JSON.parse(messages[2]).type,"shift_tracker_location:stop");
 }));
+
+test('onmessage-only Android bridge multiplexes GPS and temporary drain/backup subscribers in either removal order',()=>{
+ const original=globalThis.window;
+ const received:string[]=[];
+ const previous=(_event:MessageEvent)=>{received.push('previous');};
+ const bridge={postMessage:()=>{},onmessage:previous as ((event:MessageEvent)=>void)|null};
+ Object.defineProperty(globalThis,'window',{configurable:true,value:{location:{origin:TRUSTED_SHIFT_TRACKER_ORIGIN},addEventListener:()=>{},removeEventListener:()=>{},ShiftTrackerNative:bridge}});
+ try {
+  const primary=subscribeToNativeMessages(()=>received.push('gps'));
+  const temporary=subscribeToNativeMessages(()=>received.push('drain'));
+  bridge.onmessage!({data:'sample'} as MessageEvent);assert.deepEqual(received,['previous','gps','drain']);
+  primary();received.length=0;bridge.onmessage!({data:'drained'} as MessageEvent);assert.deepEqual(received,['previous','drain']);
+  temporary();assert.equal(bridge.onmessage,previous);
+  const first=subscribeToNativeMessages(()=>received.push('gps'));
+  const second=subscribeToNativeMessages(()=>received.push('backup'));
+  second();received.length=0;bridge.onmessage!({data:'sample'} as MessageEvent);assert.deepEqual(received,['previous','gps']);
+  first();assert.equal(bridge.onmessage,previous);
+ } finally {Object.defineProperty(globalThis,'window',{configurable:true,value:original});}
+});

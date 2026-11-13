@@ -19,6 +19,16 @@ export type GeofenceChimeStyle = "classic" | "bell" | "double" | "soft" | "digit
 export type HistoricalDeliveryLocationPrivacy = "street_postcode" | "street_sector" | "street_only" | "sector_only" | "none";
 export type DeliveryAddressSource = "manual" | "pasted" | "autocomplete" | "postcode_lookup" | "other";
 
+/** Durable identity for independent native return evidence; never route mileage. */
+export interface NativeReturnEvidence {
+  eventId: string;
+  generation: number;
+  storeId: StoreId;
+  storeRevision: string;
+  timestampEpochMs: number;
+  observedAtEpochMs: number;
+  notificationAt: number;
+}
 export interface ActivitySegment { start: string; end: string | null }
 export interface DeliveryRoutePoint {
   latitude: number;
@@ -197,6 +207,7 @@ export interface ActivityRecord {
   storeEntryAt?: string | null;
   /** Confirmed inside fix after Delivered; not an exact crossing/Hustle time. */
   storeReturnConfirmedAt?: string | null;
+  nativeReturnEvidence?: NativeReturnEvidence;
   backAtStoreAt?: string | null;
   storeExitObserved?: boolean;
   storeEntryObserved?: boolean;
@@ -927,6 +938,7 @@ export const DEFAULT_STORE_LOCATION = Object.freeze({ latitude: REAL_STATS_GEOFE
 export const DEFAULT_STORE_DISPLAY_LOCATION = Object.freeze({ latitude: 53.568186, longitude: -2.887791, label: "Domino's Ormskirk" });
 const LEGACY_OLD_STORE_LOCATION = Object.freeze({ latitude: 53.5669481, longitude: -2.8860588 });
 export const DEFAULT_SETTINGS: Settings = {
+  alwaysOnShiftMonitoring: true,
   hourlyRatePence: 1296,
   singleRatePence: 100,
   doubleRatePence: 150,
@@ -1178,6 +1190,7 @@ export function prepareAppDataForBackup(value: AppData) {
 export function migrateAppData(value: AppData): AppData {
   const migrated = structuredClone(value);
   const incomingSettingsRevision = migrated.settingsRevision ?? 0;
+  if (migrated.settings.alwaysOnShiftMonitoring === undefined) migrated.settings.alwaysOnShiftMonitoring = true;
   if (typeof migrated.settings.legacyView !== "boolean") migrated.settings.legacyView = false;
   if (!Array.isArray(migrated.rotaWeeks)) migrated.rotaWeeks = [];
   const rotaDefaults = DEFAULT_SETTINGS;

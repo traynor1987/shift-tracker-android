@@ -3,10 +3,13 @@ import test from 'node:test';
 import { syncNativeShiftState, TRUSTED_SHIFT_TRACKER_ORIGIN } from '../lib/nativeBridge.ts';
 import { emptyData, migrateAppData } from '../lib/domain.ts';
 
-test('existing installations never opt in implicitly', () => {
+test('monitoring defaults on for new and previously undefined settings, preserving an explicit off', () => {
  const data = emptyData();
- assert.notEqual(data.settings.alwaysOnShiftMonitoring, true);
- assert.notEqual(migrateAppData(data).settings.alwaysOnShiftMonitoring, true);
+ assert.equal(data.settings.alwaysOnShiftMonitoring, true);
+ delete data.settings.alwaysOnShiftMonitoring;
+ assert.equal(migrateAppData(data).settings.alwaysOnShiftMonitoring, true);
+ data.settings.alwaysOnShiftMonitoring=false;
+ assert.equal(migrateAppData(data).settings.alwaysOnShiftMonitoring, false);
 });
 
 test('trusted mirror carries explicit monitoring mode and delivery evidence independently', () => {

@@ -6,7 +6,7 @@
  */
 import { appendDeveloperLog, getDeveloperSettings, nativeMessageType } from "./developerConsole.ts";
 
-export const WEB_APP_VERSION = "2.1.249";
+export const WEB_APP_VERSION = "2.1.251";
 export const TRUSTED_SHIFT_TRACKER_ORIGIN = "https://dominos-shift-tracker.traynor1987.chatgpt.site";
 export const NATIVE_BRIDGE_VERSION = 1;
 export const NATIVE_SAMPLE_STALE_MS = 60_000;
@@ -85,6 +85,10 @@ export type NativeTrackingState = {
 };
 
 export type NativeFileSaveResult = {
+  stage?: string;
+  verified?: boolean;
+  bytes?: number;
+  sha256?: string;
   requestId: string;
   status: "saved" | "cancelled" | "error";
   message?: string;
@@ -142,6 +146,7 @@ export type NativeActionRequest = {
   expectedShiftId?: string;
   expectedActivityId?: string;
   taskName?: string;
+  requestedAtEpochMs?: number;
 };
 
 export type NativeActionOutcome = "applied" | "already_applied" | "stale_state" | "invalid_action" | "error";
@@ -174,6 +179,12 @@ function getBridge() {
  * The window listener remains for older shells, where the normal event-origin
  * check below still applies.
  */
+const onMessageSubscriptions = new WeakMap<NativeBridgePort, {
+  previous: NativeBridgePort["onmessage"];
+  dispatch: (message: MessageEvent<unknown>) => void;
+  listeners: Set<(message: MessageEvent<unknown>) => void>;
+}>();
+
 export function subscribeToNativeMessages(listener: (message: MessageEvent<unknown>) => void) {
   if (typeof window === "undefined") return () => undefined;
   const receiveWindowMessage = (message: MessageEvent<unknown>) => listener(message);
@@ -187,16 +198,35 @@ export function subscribeToNativeMessages(listener: (message: MessageEvent<unkno
       source: null,
     } as MessageEvent<unknown>);
   };
-  let previousOnMessage: NativeBridgePort["onmessage"];
+
   if (bridge?.addEventListener) bridge.addEventListener("message", receiveBridgeMessage);
   else if (bridge) {
-    previousOnMessage = bridge.onmessage;
-    bridge.onmessage = receiveBridgeMessage;
+    let subscription = onMessageSubscriptions.get(bridge);
+    if (!subscription) {
+      const previous = bridge.onmessage;
+      const listeners = new Set<(message: MessageEvent<unknown>) => void>();
+      const dispatch = (message: MessageEvent<unknown>) => {
+        previous?.call(bridge, message);
+        // A one-shot subscriber may unsubscribe while dispatching a reply.
+        for (const receive of [...listeners]) receive(message);
+      };
+      subscription = {previous, dispatch, listeners};
+      onMessageSubscriptions.set(bridge, subscription);
+      bridge.onmessage = dispatch;
+    }
+    subscription.listeners.add(receiveBridgeMessage);
   }
   return () => {
     window.removeEventListener("message", receiveWindowMessage);
     if (bridge?.removeEventListener) bridge.removeEventListener("message", receiveBridgeMessage);
-    else if (bridge?.onmessage === receiveBridgeMessage) bridge.onmessage = previousOnMessage ?? null;
+    else if (bridge) {
+      const subscription = onMessageSubscriptions.get(bridge);
+      subscription?.listeners.delete(receiveBridgeMessage);
+      if (subscription && !subscription.listeners.size) {
+        if (bridge.onmessage === subscription.dispatch) bridge.onmessage = subscription.previous ?? null;
+        onMessageSubscriptions.delete(bridge);
+      }
+    }
   };
 }
 
@@ -426,6 +456,7 @@ export function readNativeActionRequest(message: MessageEvent<unknown>): NativeA
     expectedStateRevision: optionalId("expectedStateRevision"),
     expectedShiftId: optionalId("expectedShiftId"),
     expectedActivityId: optionalId("expectedActivityId"),
+    ...(typeof candidate.requestedAtEpochMs === "number" && Number.isSafeInteger(candidate.requestedAtEpochMs) && candidate.requestedAtEpochMs > 0 && candidate.requestedAtEpochMs <= 8.64e15 ? { requestedAtEpochMs: candidate.requestedAtEpochMs } : {}),
     taskName: typeof candidate.taskName === "string" && candidate.taskName.trim().length > 0 && candidate.taskName.trim().length <= 60 ? candidate.taskName.trim() : undefined,
   };
 }
@@ -576,7 +607,13 @@ export function readNativeTrackingState(message: MessageEvent<unknown>): NativeT
 export function readNativeFileSaveResult(message: MessageEvent<unknown>): NativeFileSaveResult | null {
   const candidate = trustedMessageObject(message);
   if (!candidate || candidate.type !== "shift_tracker_file:save_result" || typeof candidate.requestId !== "string" || !candidate.requestId || candidate.requestId.length > 128 || !["saved", "cancelled", "error"].includes(String(candidate.status))) return null;
-  return { requestId: candidate.requestId, status: candidate.status as NativeFileSaveResult["status"], message: typeof candidate.message === "string" ? candidate.message : undefined };
+  return { requestId: candidate.requestId, status: candidate.status as NativeFileSaveResult["status"],
+    message: typeof candidate.message === "string" ? candidate.message.slice(0, 240) : undefined,
+    stage: typeof candidate.stage === "string" && /^[a-z_]{1,32}$/.test(candidate.stage) ? candidate.stage : undefined,
+    verified: candidate.verified === true,
+    bytes: typeof candidate.bytes === "number" && Number.isSafeInteger(candidate.bytes) && candidate.bytes >= 0 ? candidate.bytes : undefined,
+    sha256: typeof candidate.sha256 === "string" && /^[a-f0-9]{64}$/.test(candidate.sha256) ? candidate.sha256 : undefined,
+  };
 }
 
 export function readNativeStoreProofLocationResult(message: MessageEvent<unknown>): NativeStoreProofLocationResult | null {
@@ -620,28 +657,86 @@ export function requestNativeStoreProofLocation(): Promise<NativeStoreProofLocat
   });
 }
 
-export function saveFileWithNativeShell(filename: string, content: string, mimeType: string): Promise<NativeFileSaveResult | null> {
+/** Backpressured, bounded bridge messages; the document picker owns completion,
+ * so spending time in another app never fabricates a save failure. */
+export async function saveFileWithNativeShell(filename: string, content: string, mimeType: string): Promise<NativeFileSaveResult | null> {
   const bridge = getBridge();
-  if (!bridge) return Promise.resolve(null);
+  if (!bridge) return null;
+  if (fileSaveActive || recoveredFileSave) return { requestId: "busy", status: "error", stage: "busy", message: "Finish the current file save first" };
+  fileSaveActive = true;
   const requestId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return new Promise((resolve) => {
-    let unsubscribe: () => void = () => undefined;
-    const receiveResult = (event: MessageEvent<unknown>) => {
-      const result = readNativeFileSaveResult(event);
-      if (!result || result.requestId !== requestId) return;
-      window.clearTimeout(timeout);
-      unsubscribe();
-      appendDeveloperLog("BRIDGE", "FILE_SAVE_RESULT", `Android document picker result=${result.status}`, result.status === "saved" ? "success" : result.status === "error" ? "error" : "warning");
-      resolve(result);
-    };
-    const timeout = window.setTimeout(() => {
-      unsubscribe();
-      resolve({ requestId, status: "error", message: "Android file picker timed out" });
-    }, 10 * 60_000);
-    unsubscribe = subscribeToNativeMessages(receiveResult);
-    appendDeveloperLog("BRIDGE", "FILE_SAVE_SENT", `Android document picker requested · type=${mimeType} · filename omitted`, "info");
-    bridge.postMessage(JSON.stringify({ type: "shift_tracker_file:save", requestId, filename, mimeType, content }));
+  let stage = "capability";
+  const exchange = (type: string, fields: Record<string, unknown>, accepts: (value: Record<string, unknown>) => boolean, timeoutMs?: number): Promise<Record<string, unknown>> => new Promise((resolve, reject) => {
+    let unsubscribe = () => undefined as void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const probe = () => { try { bridge.postMessage(JSON.stringify({ type: "shift_tracker_file:save_status", requestId })); } catch { /* Resume may reconnect the bridge. */ } };
+    const cleanup = () => { unsubscribe(); clearTimeout(timer); clearInterval(poll); window.removeEventListener("pageshow", probe); window.removeEventListener("focus", probe); };
+    unsubscribe = subscribeToNativeMessages(event => {
+      const value = trustedMessageObject(event);
+      if (value?.requestId !== requestId || !accepts(value)) return;
+      cleanup(); resolve(value);
+    });
+    if (timeoutMs) timer = setTimeout(() => { cleanup(); reject(new Error("timeout")); }, timeoutMs);
+    else { // A dropped callback is recovered on resume or by querying the durable native result.
+      window.addEventListener("pageshow", probe); window.addEventListener("focus", probe);
+      poll = setInterval(probe, 15_000);
+    }
+    try { bridge.postMessage(JSON.stringify({ type, requestId, ...fields })); }
+    catch { cleanup(); reject(new Error("bridge")); }
   });
+  const terminal = (value: Record<string, unknown>) => value.type === "shift_tracker_file:save_result";
+  try {
+    let protocol = 1;
+    try {
+      const capability = await exchange("shift_tracker_file:capabilities", {}, value => value.type === "shift_tracker_file:capabilities", 1_500);
+      if (capability.protocol === 2) protocol = 2;
+    } catch { /* Older APKs do not implement capability discovery. */ }
+    if (protocol === 1 && content.length > 20_000_000) return { requestId, status: "error", stage: "compatibility", message: "This backup exceeds the older Android app's export limit. Install the latest Android update, then retry. No tracker data was changed." };
+    appendDeveloperLog("BRIDGE", "FILE_SAVE_SENT", `Export protocol=${protocol} · characters=${content.length} · content and filename omitted`, "info");
+    let response: Record<string, unknown>;
+    if (protocol === 2) {
+      stage = "staging";
+      const progress = (sequence: number) => (value: Record<string, unknown>) => terminal(value) || (value.type === "shift_tracker_file:progress" && value.sequence === sequence);
+      const begin = await exchange("shift_tracker_file:save_begin", { filename, mimeType, characters: content.length }, progress(-1), 30_000);
+      if (terminal(begin)) {
+        const failure = readNativeFileSaveResult({ data: begin, origin: TRUSTED_SHIFT_TRACKER_ORIGIN } as MessageEvent);
+        if (!failure || failure.status === "saved") throw new Error("premature completion");
+        response = begin;
+      }
+      else {
+        let sequence = 0;
+        for (let offset = 0; offset < content.length; sequence++) {
+          let end = Math.min(content.length, offset + 48 * 1024);
+          // Never split a UTF-16 surrogate pair between independently encoded UTF-8 chunks.
+          if (end < content.length && content.charCodeAt(end - 1) >= 0xd800 && content.charCodeAt(end - 1) <= 0xdbff) end--;
+          const ack = await exchange("shift_tracker_file:save_chunk", { sequence, content: content.slice(offset, end) }, progress(sequence), 30_000);
+          if (terminal(ack)) {
+            const failure = readNativeFileSaveResult({ data: ack, origin: TRUSTED_SHIFT_TRACKER_ORIGIN } as MessageEvent);
+            if (!failure || failure.status === "saved") throw new Error("premature completion");
+            return failure;
+          }
+          offset = end;
+        }
+        stage = "picker";
+        rememberFileReceipt(requestId);
+        response = await exchange("shift_tracker_file:save_commit", {}, terminal);
+      }
+    } else {
+      stage = "picker";
+      response = await exchange("shift_tracker_file:save", { filename, mimeType, content }, terminal);
+    }
+    let result = readNativeFileSaveResult({ data: response, origin: TRUSTED_SHIFT_TRACKER_ORIGIN } as MessageEvent);
+    if (!result) throw new Error("invalid result");
+    if (protocol === 2 && result.status === "saved" && (!result.verified || result.bytes === undefined || !result.sha256)) result = { requestId, status: "error", stage: "verify", message: "Android did not confirm readable backup bytes. Retry saving to another location." };
+    appendDeveloperLog("BRIDGE", "FILE_SAVE_RESULT", `Export stage=${result.stage ?? stage} · result=${result.status} · bytes=${result.bytes ?? "unknown"} · verified=${result.verified === true}`, result.status === "saved" ? "success" : result.status === "error" ? "error" : "warning");
+    forgetFileReceipt();
+    return result;
+  } catch {
+    try { bridge.postMessage(JSON.stringify({ type: "shift_tracker_file:save_abort", requestId })); } catch { /* Native staging expires independently. */ }
+    forgetFileReceipt();
+    return { requestId, status: "error", stage, message: `Backup export stopped at ${stage}. Retry the export; your tracker data has not changed.` };
+  } finally { fileSaveActive = false; }
 }
 
 
@@ -659,4 +754,40 @@ export function readNativeWearSettings(event: MessageEvent<unknown>): WearSettin
   for (const [key, value] of Object.entries(message.values)) if (allowed.includes(key) && typeof value === "string" && value.length <= 24) values[key] = value;
   if (message.ready && allowed.some(key => key !== "hold_actions" && !(key in values))) return null;
   return { ready: message.ready, pending: message.pending, values };
+}
+
+// Only a small receipt key persists across a recreated WebView. Backup contents
+// remain solely in the private native staging file, never localStorage.
+const PENDING_FILE_RECEIPT = 'shift-tracker-pending-file-receipt-v2';
+let fileSaveActive = false;
+let recoveredFileSave: Promise<NativeFileSaveResult | null> | null = null;
+function rememberFileReceipt(requestId: string) {
+  try { window.localStorage?.setItem(PENDING_FILE_RECEIPT, JSON.stringify({ requestId, startedAt: Date.now() })); } catch { /* Saving still works if receipt persistence is unavailable. */ }
+}
+function forgetFileReceipt() { try { window.localStorage?.removeItem(PENDING_FILE_RECEIPT); } catch { /* No payload is stored here. */ } }
+
+/** Reattach to a native picker/write/result after Activity or renderer recreation. */
+export function resumePendingNativeFileSave(): Promise<NativeFileSaveResult | null> {
+  if (recoveredFileSave) return recoveredFileSave;
+  const bridge = getBridge();
+  if (!bridge || fileSaveActive) return Promise.resolve(null);
+  let requestId: string;
+  try {
+    const pending = JSON.parse(window.localStorage?.getItem(PENDING_FILE_RECEIPT) ?? 'null');
+    if (!pending || typeof pending.requestId !== 'string' || !/^file-[A-Za-z0-9-]{1,110}$/.test(pending.requestId)) return Promise.resolve(null);
+    requestId = pending.requestId;
+  } catch { return Promise.resolve(null); }
+  recoveredFileSave = new Promise<NativeFileSaveResult>((resolve) => {
+    const probe = () => { try { bridge.postMessage(JSON.stringify({type:'shift_tracker_file:save_status', requestId})); } catch { /* Next resume retries. */ } };
+    const unsubscribe = subscribeToNativeMessages(event => {
+      let result = readNativeFileSaveResult(event);
+      if (!result || result.requestId !== requestId) return;
+      if (result.status === 'saved' && (!result.verified || result.bytes === undefined || !result.sha256)) result = { requestId, status:'error', stage:'verify', message:'The previous export could not be verified. Retry saving a full backup.' };
+      unsubscribe(); clearInterval(poll); window.removeEventListener('pageshow', probe); window.removeEventListener('focus', probe);
+      forgetFileReceipt(); resolve(result);
+    });
+    const poll = setInterval(probe,15_000);
+    window.addEventListener('pageshow',probe); window.addEventListener('focus',probe); probe();
+  }).finally(() => { recoveredFileSave = null; });
+  return recoveredFileSave;
 }

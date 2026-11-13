@@ -23,9 +23,10 @@ function handler(name:string) {
   visit(ast); assert.ok(expression, name);
   return ts.transpileModule(`globalThis.run = (${expression});`,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText;
 }
-function harness(options: { deferCommits?: boolean } = {}) {
+function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolean>; nativeBridge?: boolean } = {}) {
   let clock=Date.parse('2026-09-24T10:10:00.500Z');
   let data=domain.emptyData();
+  data.settings.alwaysOnShiftMonitoring=false; // Explicit legacy auto-return fixtures.
   const shift=domain.repairShiftActivityIds(domain.createShift(data.settings,new Date('2026-09-24T10:00:00Z')));
   data.shifts=[shift];
   const task={...data.cleaningRota![0],id:'test-task',sourceTaskId:'test-source',category:'cleaning',status:'not_started',segments:[],completedAt:null,quickCompleted:false,shiftNotes:''} as domain.ShiftTaskRecord;
@@ -41,6 +42,11 @@ function harness(options: { deferCommits?: boolean } = {}) {
   class Clock extends Date {constructor(value?:string|number){super(value ?? clock);} static now(){return clock;}}
   const sandbox:Record<string, unknown>={...domain,...timing,Date:Clock,structuredClone,console,
     lastCommittedDataRef:{get current(){return data;}},
+    nativeReturnCompletionRef:{current:null},nativeReturnFlushRef:{current:Promise.resolve()},nativeSampleFlushRef:{current:Promise.resolve()},nativeSamplePersistenceBlockedRef:{current:false},
+    nativeShellBridgeAvailable:()=>options.nativeBridge !== false,
+    requestNativeDeliveryDrain:options.drain ?? (()=>Promise.resolve(true)),
+    finishDeliveryAfterDrainRef:{current:(override:boolean,at:number,id:string)=>{vm.runInContext(handler('finishDelivery'),context);return (sandbox.run as Function)(override,undefined,undefined,sandbox.commit,at,id);}},
+    finishTaskAfterDrainRef:{current:(taskId:string,at:number,id:string)=>{vm.runInContext(handler('finishDeliveryAndStartTask'),context);return (sandbox.run as Function)(taskId,at,id);}},
     timeFormat:new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}),CUSTOMER_WAIT_REVIEW_MS:180000,STORE_PRESENCE_RETURN_PROOF_RADIUS_METRES:10,STORE_PRESENCE_START_PROOF_DEFAULT_RADIUS_METRES:25,STORE_PRESENCE_START_PROOF_MIN_RADIUS_METRES:5,STORE_PRESENCE_START_PROOF_MAX_RADIUS_METRES:50,
     now:new Date(clock-500),storeProofFix:null,locationState:{status:'off',presence:'unknown',accuracy:null},
     deliveryTapLockRef:{current:0},nativeCanonicalSampleDeliveryRef:{current:null},transferredReturnGuardRef:{current:null},realGeofenceOwnerRef:{current:null},dominosGeofenceStateRef:{current:null},lastLocationSampleAtRef:{current:0},nativeTrackingRequestedRef:{current:false},nativeTrackingActiveRef:{current:false},
@@ -347,4 +353,44 @@ test('always-on monitoring preserves manual completion even after an overdue ret
   assert.equal(h.data.shifts[0].activities!.at(-1)!.end,null);
   await h.call('finishDelivery');
   assert.ok(h.data.shifts[0].activities!.at(-1)!.end);
+});
+
+
+for (const action of ['finishDelivery','finishDeliveryAndStartTask']) test(`${action}: independent return eligibility waits for durable mileage drain and retains manual tap time`,async()=>{
+  let release!:(ok:boolean)=>void;
+  const h=harness({drain:()=>new Promise(resolve=>{release=resolve;})}); const run=returnedRun(h);
+  run.nativeReturnEvidence={eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
+  const pending=h.call(action,...(action==='finishDeliveryAndStartTask'?['test-task']:[]));
+  assert.equal(run.end,null);assert.equal(returnEligibility(run,{status:'searching',presence:'unknown'}).allowed,true);
+  h.advance(30000);
+  // Simulate durable backlog ingestion before native issues its watermark ACK.
+  run.routeEvidence={status:'recording',startedAt:run.start,completedAt:null,recordedPointCount:1,expiresAt:null,retention:'forever',detail:'standard',distanceMetres:0,points:[{latitude:53.568,longitude:-2.889,accuracy:5,timestamp:'2026-09-24T10:21:00.000Z'}],gaps:[],issues:[]} as domain.DeliveryRouteEvidence;
+  release(true);await pending;
+  const saved=h.data.shifts[0].activities!.find(item=>item.id===run.id)!;
+  assert.equal(saved.end,'2026-09-24T10:56:00.500Z');assert.equal(saved.routeEvidence?.points.length,1);
+  if(action==='finishDeliveryAndStartTask')assert.equal(h.task.segments.at(-1)?.start,saved.end);
+});
+
+test('failed native drain leaves the delivery and mileage open',async()=>{
+  const h=harness({drain:async()=>false});const run=returnedRun(h);
+  run.nativeReturnEvidence={eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
+  await h.call('finishDelivery');assert.equal(run.end,null);assert.ok(h.notices.some(message=>message.includes('still waiting to save')));
+});
+
+
+test('native return evidence transferred into a normal browser still allows manual completion',async()=>{
+ const h=harness({nativeBridge:false,drain:()=>{throw new Error('Browser must not request an Android drain');}});const run=returnedRun(h);
+ run.nativeReturnEvidence={eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
+ await h.call('finishDelivery');assert.equal(h.data.shifts[0].activities!.find(item=>item.id===run.id)!.end,'2026-09-24T10:56:00.500Z');
+});
+
+
+test('queued native manual return retains trusted tap timestamp and rejects pre-Delivered/future taps',async()=>{
+ const h=harness({nativeBridge:false});const run=returnedRun(h);
+ for(const stamp of ['2026-09-24T10:12:00Z','2026-09-24T11:00:00Z']){
+  await h.call('finishDelivery',false,undefined,undefined,undefined,undefined,undefined,Date.parse(stamp));
+  assert.equal(run.end,null);
+ }
+ await h.call('finishDelivery',false,undefined,undefined,undefined,undefined,undefined,Date.parse('2026-09-24T10:55:00Z'));
+ assert.equal(h.data.shifts[0].activities!.find(item=>item.id===run.id)!.end,'2026-09-24T10:55:00.000Z');
 });

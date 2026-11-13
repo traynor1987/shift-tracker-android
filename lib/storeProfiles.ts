@@ -12,7 +12,7 @@ export function filterStoreShifts(shifts: Shift[], filter: StoreFilter): Shift[]
 /** Provisional cover-store sessions must never borrow home-store automation. */
 export function settingsForStore(settings: Settings, storeId: StoreId): Settings {
   if (storeId === 'ormskirk') return settings;
-  return { ...settings, singleRatePence: 85, doubleRatePence: 135, activeStoreId: "maghull", dominosReferenceRadiusMetres: settings.maghullDominosReferenceRadiusMetres ?? 75, locationAssistEnabled: maghullGeofenceVerified(settings), alwaysOnShiftMonitoring: maghullGeofenceVerified(settings) && settings.alwaysOnShiftMonitoring === true, recordDeliveryRoutes: settings.recordDeliveryRoutes, automaticDispatchTimer: maghullGeofenceVerified(settings) && settings.automaticDispatchTimer === true,
+  return { ...settings, singleRatePence: 85, doubleRatePence: 135, activeStoreId: "maghull", dominosReferenceRadiusMetres: settings.maghullDominosReferenceRadiusMetres ?? 75, locationAssistEnabled: maghullGeofenceVerified(settings), alwaysOnShiftMonitoring: maghullGeofenceVerified(settings) && settings.alwaysOnShiftMonitoring !== false, recordDeliveryRoutes: settings.recordDeliveryRoutes, automaticDispatchTimer: maghullGeofenceVerified(settings) && settings.automaticDispatchTimer === true,
     carryoutDepartureAssistEnabled: false, carryoutDepartureZone: null,
     storePresenceProofEnabled: false, storePresenceStartProofEnabled: false,
     storeDisplayLatitude: STORES.maghull.latitude, storeDisplayLongitude: STORES.maghull.longitude,

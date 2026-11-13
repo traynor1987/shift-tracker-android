@@ -11,7 +11,7 @@ export function returnEligibility(activity:ActivityRecord|null|undefined, locati
 }
 /** Notification is a consequence of the active canonical session, never a GPS callback. */
 export function returnNotification(activity:ActivityRecord|null|undefined,previousDeliveryId:string|null) {
- if(!activity || activity.end || activity.id===previousDeliveryId)return null;
+ if(!activity || activity.end || activity.id===previousDeliveryId || activity.nativeReturnEvidence)return null;
  const at=confirmedStoreReturnAt(activity);
  return at ? {deliveryId:activity.id,at} : null;
 }

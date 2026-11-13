@@ -120,7 +120,7 @@ export function downloadFile(filename: string, content: string, type: string) {
 
 export async function saveExportFile(filename: string, content: string, type: string) {
   const nativeResult = await saveFileWithNativeShell(filename, content, type);
-  if (nativeResult) return { filename, status: nativeResult.status, message: nativeResult.message };
+  if (nativeResult) return { filename, ...nativeResult };
   downloadFile(filename, content, type);
   return { filename, status: "saved" as const };
 }

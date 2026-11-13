@@ -158,7 +158,7 @@ function splitData(data: AppData): CanonicalParts {
   };
 }
 
-function reconstructData(parts: Partial<CanonicalParts>): AppData {
+function reconstructData(parts: Partial<CanonicalParts>, migrate = true): AppData {
   if (!parts.core || !parts.settings || !parts.payroll || !parts.rota || !parts.shifts || !parts.routes) throw new Error("IndexedDB canonical records are incomplete.");
   const routeMap = new Map(parts.routes.map((route) => [route.activityId, route]));
   const shifts = parts.shifts.map((record) => {
@@ -171,7 +171,7 @@ function reconstructData(parts: Partial<CanonicalParts>): AppData {
     }
     return shift;
   });
-  return validatedData({
+  const data: AppData = {
     version: parts.core.version,
     settings: structuredClone(parts.settings.value),
     shifts,
@@ -182,10 +182,11 @@ function reconstructData(parts: Partial<CanonicalParts>): AppData {
     cleaningRota: structuredClone(parts.core.cleaningRota),
     preparationRota: structuredClone(parts.core.preparationRota),
     rotaWeeks: structuredClone(parts.rota.rotaWeeks),
-  });
+  };
+  return migrate ? validatedData(data) : data;
 }
 
-async function readCanonical(database: IDBDatabase): Promise<AppData> {
+async function readCanonical(database: IDBDatabase, migrate = true): Promise<AppData> {
   const names = [SHIFT_TRACKER_DB_STORES.core, SHIFT_TRACKER_DB_STORES.settings, SHIFT_TRACKER_DB_STORES.payroll, SHIFT_TRACKER_DB_STORES.rota, SHIFT_TRACKER_DB_STORES.shifts, SHIFT_TRACKER_DB_STORES.routes];
   const transaction = database.transaction(names, "readonly");
   const [core, settings, payroll, rota, shifts, routes] = await Promise.all([
@@ -197,7 +198,21 @@ async function readCanonical(database: IDBDatabase): Promise<AppData> {
     requestResult(transaction.objectStore(SHIFT_TRACKER_DB_STORES.routes).getAll()),
   ]);
   await transactionDone(transaction);
-  return reconstructData({ core: core as CoreRecord, settings: settings as SettingsRecord, payroll: payroll as PayrollRecord, rota: rota as RotaRecord, shifts: shifts as ShiftRecord[], routes: routes as RouteRecord[] });
+  return reconstructData({ core: core as CoreRecord, settings: settings as SettingsRecord, payroll: payroll as PayrollRecord, rota: rota as RotaRecord, shifts: shifts as ShiftRecord[], routes: routes as RouteRecord[] }, migrate);
+}
+
+/** Full Backup reads every canonical store in one read-only transaction.
+ * It neither migrates persisted records nor rotates recovery generations. */
+export function readIndexedDbBackupSnapshot(options: StorageOptions = {}): Promise<AppData> {
+  const activeSession = session(options.databaseName ?? SHIFT_TRACKER_DB_NAME);
+  const snapshot = activeSession.queue.then(async () => {
+    const database = await openShiftTrackerDatabase(options);
+    try { return await readCanonical(database, false); } finally { database.close(); }
+  });
+  // Serialise with writes queued in this realm. Other realms are coordinated
+  // by the all-store IndexedDB transaction itself.
+  activeSession.queue = snapshot.then(() => undefined, () => undefined);
+  return snapshot;
 }
 
 async function readMeta(database: IDBDatabase, key: string): Promise<unknown> {

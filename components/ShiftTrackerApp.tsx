@@ -4,6 +4,7 @@ import { settingsForStore, maghullGeofenceVerified, realGeofenceDefinitionForSet
 /* Domino's is a product name used repeatedly in visible JSX copy. */
 /* eslint-disable react/no-unescaped-entities */
 
+import { readNativeReturnEvent, persistNativeReturnEvent, acknowledgeNativeReturnEvent, requestNativeDeliveryDrain } from "../lib/nativeReturnEvidence";
 import { returnEligibility, dispatchReturnNotification, storeProofExpiryDelay } from "../lib/returnEligibility";
 import { traceReturn } from "../lib/returnDiagnostics";
 import { preservePresentationReferences } from "../lib/presentationPreference";
@@ -208,6 +209,7 @@ import {
   type BackupRecordCounts,
   type BackupValidationResult,
 } from "@/lib/backup";
+import { BackupExportError, prepareBackupExport } from "@/lib/backupExport";
 import {
   backupImportDiagnostic,
   validateBackupFile,
@@ -330,6 +332,7 @@ import {
   readNativeShellInfo,
   readNativeTrackingState,
   readNativeWearUpdateMessage,
+  resumePendingNativeFileSave,
   readNativeWebUpdateMessage,
   requestNativeApkUpdate,
   requestNativeBackgroundLocation,
@@ -926,6 +929,7 @@ async function resizeAddressImage(file: File): Promise<string> {
 
 export default function ShiftTrackerApp() {
   const [storedData, setData] = useState<AppData>(emptyData);
+  const backupExportInFlightRef = useRef(false);
   const currentStore = storedData.shifts.find(item => item.status !== "completed")?.storeId ?? "ormskirk";
   const data = useMemo(() => currentStore === "maghull" ? { ...storedData, settings: settingsForStore(storedData.settings, currentStore) } : storedData, [storedData, currentStore]);
   const lastCommittedDataRef = useRef(data);
@@ -1071,6 +1075,12 @@ export default function ShiftTrackerApp() {
   }>({ activityId: "", point: null });
   const nativeShellConnectedRef = useRef(false);
   const nativeSampleFlushRef = useRef<Promise<void>>(Promise.resolve());
+  // Return evidence has its own priority lane, independent of route journal size.
+  const nativeReturnFlushRef = useRef<Promise<unknown>>(Promise.resolve());
+  const queuedNativeReturnIdsRef = useRef(new Set<string>());
+  const nativeReturnCompletionRef = useRef<Promise<CommitResult> | null>(null);
+  const finishDeliveryAfterDrainRef = useRef<(gpsOverride: boolean, actionMs: number, deliveryId: string) => Promise<CommitResult> | void>(() => undefined);
+  const finishTaskAfterDrainRef = useRef<(taskId: string, actionMs: number, deliveryId: string) => Promise<CommitResult> | void>(() => undefined);
   const queuedNativeSampleIdsRef = useRef(new Set<string>());
   const latestNativeProviderFixRef = useRef<{ deliveryId: string; timestamp: number } | null>(null);
   const latestBrowserProviderFixRef = useRef<{ shiftId: string; deliveryId: string | null; timestamp: number } | null>(null);
@@ -3001,10 +3011,11 @@ export default function ShiftTrackerApp() {
       };
     };
     const latestData = lastCommittedDataRef.current;
-    const settings = latestData.settings;
     const currentActive = latestData.shifts.find(
       (shift) => shift.status !== "completed",
     );
+    // Commits publish raw saved settings before React rerenders its projection.
+    const settings = settingsForStore(latestData.settings, currentActive?.storeId ?? "ormskirk");
     const deliveryActivity = currentActive?.activities?.findLast(
       (item) =>
         (item.type === "single_delivery" || item.type === "double_delivery") &&
@@ -3224,7 +3235,7 @@ export default function ShiftTrackerApp() {
           carryoutState.observedOutside = true;
         } else if (
           carryoutState.observedOutside &&
-          settings.alwaysOnShiftMonitoring !== true &&
+          settings.alwaysOnShiftMonitoring === false &&
           !carryoutState.autoReturning &&
           deliveryCustomersComplete(deliveryActivity)
         ) {
@@ -4263,7 +4274,7 @@ export default function ShiftTrackerApp() {
     notify("Break started");
   };
 
-  const finishDeliveryAndStartTask = (taskId: string) => {
+  const finishDeliveryAndStartTask = (taskId: string, drainedAt?: number, drainedDeliveryId?: string): Promise<CommitResult> | void => {
     if (!active) return;
     const running = active.activities?.findLast(
       (item) =>
@@ -4275,11 +4286,27 @@ export default function ShiftTrackerApp() {
       !returnEligibility(running, locationState).allowed
     )
       return notify("Return to the store geofence first");
+    if (drainedDeliveryId && running?.id !== drainedDeliveryId) return;
+    if (running?.nativeReturnEvidence && nativeShellBridgeAvailable() && drainedAt === undefined) {
+      const actionMs = Date.now();
+      if (nativeReturnCompletionRef.current) return;
+      notify("Return confirmed · saving the remaining route before starting your task");
+      nativeReturnCompletionRef.current = requestNativeDeliveryDrain(active.id, running.id).then(async drained => {
+        await nativeReturnFlushRef.current;
+        await nativeSampleFlushRef.current;
+        if (!drained || nativeSamplePersistenceBlockedRef.current) {
+          notify("Route is still waiting to save. Keep this delivery open and try Back at Store again.");
+          return {status:"rejected" as const};
+        }
+        return await finishTaskAfterDrainRef.current(taskId, actionMs, running.id) ?? {status:"rejected" as const};
+      }).finally(() => { nativeReturnCompletionRef.current = null; });
+      return nativeReturnCompletionRef.current;
+    }
     const proof = storePresenceProofStatus(running, storeProofFix);
     if (proof.required && !proof.confirmed)
       return notify(`Store proof required · ${proof.message}`);
-    const stamp = new Date().toISOString();
-    commit((draft) => {
+    const stamp = new Date(drainedAt ?? Date.now()).toISOString();
+    return commit((draft) => {
       const shift = draft.shifts.find((item) => item.id === active.id)!;
       const deliveryActivity = shift.activities?.findLast(
         (item) =>
@@ -4287,6 +4314,8 @@ export default function ShiftTrackerApp() {
             item.type === "double_delivery") &&
           !item.end,
       );
+      if (drainedDeliveryId && deliveryActivity?.id !== drainedDeliveryId) return false;
+      if (drainedAt !== undefined && deliveryActivity?.customerEvents?.some(event => event.source === "manual_delivered" && Date.parse(event.timestamp) > drainedAt)) return false;
       if (deliveryActivity) {
         finaliseDeliveryActivity(
           deliveryActivity,
@@ -4963,9 +4992,12 @@ export default function ShiftTrackerApp() {
     autoReturnRecovery?: { entryAt: string; allowanceMs: number },
     carryoutAutoReturn?: { entryAt: string },
     commitAction: AppDataCommit = commit,
-  ) {
-    // The opt-in native monitoring mode always preserves the owner's manual tap.
-    if ((autoReturnRecovery || carryoutAutoReturn) && lastCommittedDataRef.current.settings.alwaysOnShiftMonitoring === true) return;
+    drainedAt?: number,
+    drainedDeliveryId?: string,
+    requestedAt?: number,
+  ): Promise<CommitResult> | void {
+    // Native monitoring preserves the owner's manual completion tap.
+    if ((autoReturnRecovery || carryoutAutoReturn) && lastCommittedDataRef.current.settings.alwaysOnShiftMonitoring !== false) return;
     if (!active) return;
     const running = (active.activities ?? []).findLast(
       (item) =>
@@ -4973,6 +5005,25 @@ export default function ShiftTrackerApp() {
         !item.end,
     );
     if (!running) return;
+    if ((autoReturnRecovery || carryoutAutoReturn) && running.nativeReturnEvidence) return;
+    if (requestedAt !== undefined && (!Number.isSafeInteger(requestedAt) || requestedAt > Date.now() + 5_000 ||
+      requestedAt < Math.max(Date.parse(running.start), ...(running.customerEvents ?? []).filter(event => event.source === "manual_delivered").map(event => Date.parse(event.timestamp))))) return;
+    if (drainedDeliveryId && running.id !== drainedDeliveryId) return;
+    if (running.nativeReturnEvidence && nativeShellBridgeAvailable() && drainedAt === undefined) {
+      if (nativeReturnCompletionRef.current) return nativeReturnCompletionRef.current;
+      const actionMs = requestedAt ?? Date.now();
+      notify("Return confirmed · saving the remaining route");
+      nativeReturnCompletionRef.current = requestNativeDeliveryDrain(active.id, running.id).then(async drained => {
+        await nativeReturnFlushRef.current;
+        await nativeSampleFlushRef.current;
+        if (!drained || nativeSamplePersistenceBlockedRef.current) {
+          notify("Route is still waiting to save. Keep this delivery open and try Back at Store again.");
+          return {status:"rejected" as const};
+        }
+        return await finishDeliveryAfterDrainRef.current(gpsOverride, actionMs, running.id) ?? {status:"rejected" as const};
+      }).finally(() => { nativeReturnCompletionRef.current = null; });
+      return nativeReturnCompletionRef.current;
+    }
     const deliveredCustomers = (running.customerEvents ?? []).filter(
       (event) => event.source === "manual_delivered",
     ).length;
@@ -4991,7 +5042,7 @@ export default function ShiftTrackerApp() {
       return notify(
         "Return to the store geofence first · hold for 5 seconds to override",
       );
-    const actionMs = Date.now();
+    const actionMs = drainedAt ?? requestedAt ?? Date.now();
     const actionStamp = new Date(actionMs).toISOString();
     const automaticReturn = carryoutAutoReturn
       ? { entryAt: carryoutAutoReturn.entryAt, allowanceMs: 0 }
@@ -5014,6 +5065,7 @@ export default function ShiftTrackerApp() {
       const shift = draft.shifts.find((item) => item.id === active.id);
       const activity = shift?.activities?.find((item) => item.id === running.id);
       if (!shift || !activity || activity.end) return false;
+      if (drainedAt !== undefined && activity.customerEvents?.some(event => event.source === "manual_delivered" && Date.parse(event.timestamp) > drainedAt)) return false;
       if (automaticReturn && (
         !deliveryCustomersComplete(activity) ||
         (autoReturnRecovery && (
@@ -5084,6 +5136,13 @@ export default function ShiftTrackerApp() {
     return persistence;
   }
 
+  // Delayed manual actions use the latest render's complete route and retain
+  // the original tap time; a new delivery can never consume an old drain reply.
+  // eslint-disable-next-line react-hooks/refs
+  finishDeliveryAfterDrainRef.current = (override, actionMs, deliveryId) => finishDelivery(override, undefined, undefined, commit, actionMs, deliveryId);
+  // eslint-disable-next-line react-hooks/refs
+  finishTaskAfterDrainRef.current = (taskId, actionMs, deliveryId) => finishDeliveryAndStartTask(taskId, actionMs, deliveryId);
+
   /**
    * A driver can forget the final Back at Store tap after completing a
    * delivery. Once Delivered has been explicitly confirmed and the protected
@@ -5107,7 +5166,8 @@ export default function ShiftTrackerApp() {
       !running ||
       !deliveryCustomersComplete(running) ||
       !confirmedStoreReturnAt(running) ||
-      data.settings.alwaysOnShiftMonitoring === true ||
+      data.settings.alwaysOnShiftMonitoring !== false ||
+      Boolean(running.nativeReturnEvidence) ||
       !entryAt ||
       !lastDeliveredAt ||
       Date.parse(entryAt) < Date.parse(lastDeliveredAt)
@@ -6520,95 +6580,49 @@ export default function ShiftTrackerApp() {
     );
   };
 
-  const exportBackup = async () => {
+  const runFullBackupExport = async (emergency: boolean) => {
+    if (backupExportInFlightRef.current) return notify("A backup is already being prepared or saved");
+    backupExportInFlightRef.current = true;
     const stamp = new Date().toISOString();
     const filename = backupFilename(new Date(stamp));
-    const exported = createBackupDocument(
-      data,
-      WEB_APP_VERSION,
-      new Date(stamp),
-    );
-    const validation = validateBackupDocument(exported);
-    if (!validation.ok) {
-      setNotice({
-        title: "Backup validation failed",
-        message: `${validation.message} No backup was reported as complete and your current tracker data was not changed.`,
-      });
-      return;
-    }
+    let stage = emergency ? "preparation" : "save_barrier";
+    notify("Preparing full backup…");
     try {
-      const result = await saveExportFile(
-        filename,
-        JSON.stringify(exported, null, 2),
-        "application/json",
-      );
+      // Read every canonical IndexedDB store after pending local writes finish.
+      // Worker read/validation/encoding avoids freezing GPS/UI on large routes.
+      const exported = emergency
+        ? await prepareBackupExport(storedData, WEB_APP_VERSION, stamp)
+        : await runAfterLocalSaves(() => prepareBackupExport(null, WEB_APP_VERSION, stamp));
+      stage = "save";
+      const result = await saveExportFile(filename, exported.content, "application/json");
       if (result.status === "cancelled") return notify("Backup save cancelled");
-      if (result.status !== "saved")
-        throw new Error(result.message ?? "Backup save failed");
-      // Keep the live app state (and any still-active destination details) on
-      // the device. Only the downloaded copy is privacy-sanitised.
-      commit((draft) => {
-        draft.lastBackupAt = stamp;
-      });
-      setBackupResult({
-        filename,
-        createdAt: stamp,
-        counts: exported.recordCounts,
-      });
-      notify("Backup created");
-    } catch {
-      setNotice({
-        title: "Backup not downloaded",
-        message:
-          "The backup file could not be created. Your existing tracker data is still safe on this device.",
-      });
-    }
-  };
-
-  const exportEmergencyBackup = async () => {
-    const stamp = new Date().toISOString();
-    const filename = backupFilename(new Date(stamp));
-    const exported = createBackupDocument(
-      data,
-      WEB_APP_VERSION,
-      new Date(stamp),
-    );
-    const validation = validateBackupDocument(exported);
-    if (!validation.ok) {
-      setStorageIssue({
-        message: `Emergency backup validation failed: ${validation.message}`,
-        conflict: false,
-      });
-      return;
-    }
-    try {
-      const result = await saveExportFile(
-        filename,
-        JSON.stringify(exported, null, 2),
-        "application/json",
-      );
-      if (result.status === "cancelled") return;
-      if (result.status !== "saved")
-        throw new Error(result.message ?? "Emergency backup save failed");
-      // Deliberately do not update lastBackupAt: local persistence is already
-      // failing and the downloaded in-memory snapshot is the rescue path.
-      setStorageIssue(null);
-      setBackupResult({
-        filename,
-        createdAt: stamp,
-        counts: exported.recordCounts,
-      });
-      notify("Emergency backup created");
+      if (result.status !== "saved") throw new BackupExportError("stage" in result ? result.stage ?? "save" : "save", result.message ?? "Backup save failed");
+      // Only successful output can update metadata; never replace the live
+      // state with the sanitised snapshot or overwrite GPS received meanwhile.
+      if (!emergency) void commit((draft) => { draft.lastBackupAt = stamp; });
+      else setStorageIssue(null);
+      setBackupResult({ filename, createdAt: stamp, counts: exported.recordCounts });
+      notify(emergency ? "Emergency backup created" : "Backup created");
     } catch (error) {
-      setStorageIssue({
-        message:
-          error instanceof Error
-            ? `Emergency backup failed: ${error.message}`
-            : "The emergency backup could not be downloaded.",
-        conflict: false,
-      });
-    }
+      if (error instanceof BackupExportError) stage = error.stage;
+      const detail = error instanceof BackupExportError ? error.message : "The backup file could not be created. Retry the export.";
+      appendDeveloperLog("PWA", "BACKUP_EXPORT_FAILED", `Backup stage=${stage} · tracker data unchanged`, "error");
+      const message = `${detail} (Stage: ${stage}.) Your existing tracker data is still safe on this device.`;
+      if (emergency) setStorageIssue({ message, conflict: false });
+      else setNotice({ title: stage === "validation" ? "Backup validation failed" : "Backup not downloaded", message });
+    } finally { backupExportInFlightRef.current = false; }
   };
+  useEffect(() => {
+    if (!ready || !nativeShellInfo) return;
+    void resumePendingNativeFileSave().then((result) => {
+      if (!result) return;
+      if (result.status === "saved") notify("Previous backup saved and verified by Android");
+      else if (result.status === "cancelled") notify("Backup save cancelled");
+      else setNotice({ title: "Previous backup not completed", message: `${result.message ?? "Retry the full backup export."} (Stage: ${result.stage ?? "recovery"}.) Your tracker data is unchanged.` });
+    });
+  }, [ready, nativeShellInfo?.shellVersion]);
+  const exportBackup = () => runFullBackupExport(false);
+  const exportEmergencyBackup = () => runFullBackupExport(true);
 
   const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -6828,7 +6842,7 @@ export default function ShiftTrackerApp() {
 
   const exportTodayState = async () => {
     const stamp = new Date();
-    const transfer = createTodayStateTransfer(data, stamp);
+    const transfer = createTodayStateTransfer(storedData, stamp);
     if (!transfer.data.shifts.length)
       return setNotice({
         title: "Nothing to transfer yet",
@@ -7295,6 +7309,18 @@ export default function ShiftTrackerApp() {
       (readNativeTrackingState(event) || readNativeLocationSample(event))
     )
       return;
+    const nativeReturn = ready ? readNativeReturnEvent(event) : null;
+    if (nativeReturn && !queuedNativeReturnIdsRef.current.has(nativeReturn.eventId)) {
+      queuedNativeReturnIdsRef.current.add(nativeReturn.eventId);
+      // Do not append to nativeSampleFlushRef: a resumed journal can contain
+      // hundreds of route points. This canonical fact must be available first.
+      nativeReturnFlushRef.current = nativeReturnFlushRef.current
+        .then(() => persistNativeReturnEvent(nativeReturn,
+          update => commit(update, undefined, "location"), acknowledgeNativeReturnEvent))
+        .catch((error) => appendDeveloperLog("INGESTION", "NATIVE_RETURN_PERSISTENCE_DEFERRED",
+          error instanceof Error ? error.message : "Native return remains pending until canonical persistence succeeds", "error"))
+        .finally(() => queuedNativeReturnIdsRef.current.delete(nativeReturn.eventId));
+    }
     const dispatchNotification = readNativeDispatchNotification(event);
     if (dispatchNotification) {
       const outcome = startEarlyDispatchFromNotification(
@@ -7420,7 +7446,9 @@ export default function ShiftTrackerApp() {
                   locationState.presence,
                 ))
             )
-              finishDelivery();
+              await finishDelivery(false, undefined, undefined, commit, undefined, undefined,
+                nativeAction.expectedShiftId === active?.id && nativeAction.expectedActivityId === openDelivery.id
+                  ? nativeAction.requestedAtEpochMs : undefined);
             else if (
               nativeAction.action === "end_break" &&
               active?.status === "break"
@@ -7766,6 +7794,9 @@ export default function ShiftTrackerApp() {
         );
       nativeSampleFlushRef.current = nativeSampleFlushRef.current
         .then(async () => {
+          // Even samples queued before shell-ready yield to the latest return
+          // commit. Historical route replay cannot gate return eligibility.
+          await nativeReturnFlushRef.current;
           if (nativeSamplePersistenceBlockedRef.current) return;
           recordRuntimeMeasurement("native_queue_wait", performance.now() - receivedAt);
           const ingestionStartedAt = performance.now();
@@ -8125,7 +8156,7 @@ export default function ShiftTrackerApp() {
         : "unknown",
       allowedActions,
       settings: {
-        alwaysOnShiftMonitoring: data.settings.alwaysOnShiftMonitoring === true && (active.storeId !== "maghull" || nativeShellInfo?.diagnostics?.storeProfiles === true),
+        alwaysOnShiftMonitoring: data.settings.alwaysOnShiftMonitoring !== false && (active.storeId !== "maghull" || nativeShellInfo?.diagnostics?.storeProfiles === true),
         shiftMonitoringHighAccuracy: data.settings.shiftMonitoringHighAccuracy === true,
         liveNotification: data.settings.androidLiveShiftNotification !== false,
         notificationActions: data.settings.androidNotificationActions !== false,
@@ -9534,7 +9565,7 @@ export default function ShiftTrackerApp() {
                   <button
                     className="confirm-primary"
                     onClick={() => {
-                      void saveData(data)
+                      void saveData(storedData)
                         .then(() => {
                           setStorageIssue(null);
                           notify("Data saved successfully");
@@ -23338,21 +23369,21 @@ function SettingsPage({
           <div>
             <p className="eyebrow">ANDROID APK</p>
             <h2>Always-On Shift Monitoring</h2>
-            <p>Requires Android 2.2.74 or later. Off by default.</p>
+            <p>Enabled by default for verified stores. Your explicit Off setting is preserved.</p>
             <div className="android-toggle-row shift-monitoring-toggle-row">
               <span>
                 <strong>Monitor throughout your shift</strong>
-                <small>{settings.alwaysOnShiftMonitoring === true ? "On · starts at Clock In" : "Off · enable for shift-long monitoring"}</small>
+                <small>{settings.alwaysOnShiftMonitoring !== false ? "On · starts at Clock In" : "Off · enable for shift-long monitoring"}</small>
               </span>
               <button
                 type="button"
                 role="switch"
                 aria-label="Always-On Shift Monitoring"
-                aria-checked={settings.alwaysOnShiftMonitoring === true}
-                className={`geofence-toggle${settings.alwaysOnShiftMonitoring === true ? " active" : ""}`}
-                onClick={() => update("alwaysOnShiftMonitoring", settings.alwaysOnShiftMonitoring !== true)}
+                aria-checked={settings.alwaysOnShiftMonitoring !== false}
+                className={`geofence-toggle${settings.alwaysOnShiftMonitoring !== false ? " active" : ""}`}
+                onClick={() => update("alwaysOnShiftMonitoring", settings.alwaysOnShiftMonitoring === false)}
               >
-                {settings.alwaysOnShiftMonitoring === true ? "ON" : "OFF"}
+                {settings.alwaysOnShiftMonitoring !== false ? "ON" : "OFF"}
               </button>
             </div>
             <label>Battery mode <select value={settings.shiftMonitoringHighAccuracy ? "high" : "adaptive"} onChange={event => update("shiftMonitoringHighAccuracy", event.target.value === "high")}><option value="adaptive">Adaptive (default)</option><option value="high">High Accuracy</option></select></label>

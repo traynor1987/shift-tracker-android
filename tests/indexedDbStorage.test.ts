@@ -325,3 +325,17 @@ test("equal-length GPS edits still compare and persist every changed field", asy
     assert.equal(persisted.distanceMetres, 650);
   }
 });
+
+test('Full Backup read waits for pending canonical writes, rehydrates GPS and is strictly read-only', async () => {
+  const { readIndexedDbBackupSnapshot } = await import('../lib/indexedDbStorage.ts');
+  const source = routedData(8); const ctx = context(source); await loadIndexedDbData(ctx);
+  const changed = structuredClone(source); changed.settings.hourlyRatePence += 10;
+  const saving = saveIndexedDbData(changed, ctx);
+  const snapshot = await readIndexedDbBackupSnapshot(ctx); await saving;
+  assert.equal(snapshot.settings.hourlyRatePence, changed.settings.hourlyRatePence);
+  assert.equal(snapshot.shifts[0].activities?.find(item=>item.id==='route-1')?.routeEvidence?.points.length,8);
+  const originalPut = IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put = function () { throw new Error('Backup must not write'); };
+  try { const second = await readIndexedDbBackupSnapshot(ctx); assert.deepEqual(second,snapshot); }
+  finally { IDBObjectStore.prototype.put = originalPut; }
+});

@@ -13,3 +13,11 @@ test('active cover-store rendering projects safe settings and rejects stale GPS 
  assert.match(source, /settings.activeStoreId === "maghull" && !maghullGeofenceVerified\(settings\)/);
  assert.match(source, /ownerShiftId/);
 });
+
+test('backups and recovery saves retain raw home settings during cover shifts', () => {
+ assert.match(source, /prepareBackupExport\(storedData, WEB_APP_VERSION, stamp\)/);
+ assert.match(source, /runAfterLocalSaves\(\(\) => prepareBackupExport\(null, WEB_APP_VERSION, stamp\)\)/);
+ assert.match(source, /createTodayStateTransfer\(storedData, stamp\)/);
+ assert.doesNotMatch(source, /void saveData\(data\)/);
+ assert.match(source, /settingsForStore\(latestData.settings, currentActive\?\.storeId/);
+});
