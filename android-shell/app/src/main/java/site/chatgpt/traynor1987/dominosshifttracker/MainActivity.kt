@@ -1004,6 +1004,13 @@ class MainActivity : ComponentActivity() {
                 if (operation == "shift_tracker_file:save_status") {
                     if (export?.id() == requestId) {
                         if (export.isTerminal) reportExport(export)
+                        else if (export.stage() == "staging") {
+                            // The web stores its receipt immediately before commit.
+                            // A renderer exit in that gap must not leave a recovered
+                            // request polling forever or block a fresh export.
+                            export.complete("error", "interrupted", "The backup transfer was interrupted. Export again; tracker data is unchanged.")
+                            reportExport(export)
+                        }
                         else if (export.stage() == "picker" && export.destination().isBlank()) launchExportPicker(export)
                     } else sendFileSaveResult(requestId, "error", "The previous export receipt is unavailable. Retry export.", "recovery")
                     return@execute
