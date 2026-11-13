@@ -641,6 +641,7 @@ class MainActivity : ComponentActivity() {
             .put("type", "shift_tracker_native_action:requested")
             .put("id", pending.optString("id"))
             .put("action", pending.optString("action"))
+            .put("requestedAtEpochMs", pending.optLong("createdAt"))
             .put("expectedStateRevision", pending.optString("expectedStateRevision"))
             .put("expectedShiftId", pending.optString("expectedShiftId"))
             .put("expectedActivityId", pending.optString("expectedActivityId"))
