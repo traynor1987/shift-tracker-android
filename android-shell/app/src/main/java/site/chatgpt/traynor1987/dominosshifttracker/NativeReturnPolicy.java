@@ -3,13 +3,17 @@ package site.chatgpt.traynor1987.dominosshifttracker;
 /** Observation only. Mirrors the protected Web evaluator; never completes a delivery.
  * Timestamps are provider acquisition times. A gap cannot become an exact crossing. */
 public final class NativeReturnPolicy {
+ public static boolean acceptsFix(long at,long now,double latitude,double longitude,double accuracy) {
+  return at>0 && at>=now-30000 && at<=now+2000 && Double.isFinite(latitude) && latitude>=-90 && latitude<=90 &&
+   Double.isFinite(longitude) && longitude>=-180 && longitude<=180 && Double.isFinite(accuracy) && accuracy>=0 && accuracy<=65;
+ }
  public String presence="unknown", pending="unknown";
  public int count=0;
  public long lastAt=0, pendingAt=0, exitAt=0, firstInsideAt=0, confirmedAt=0, exactEntryAt=0;
  public boolean pendingObserved=false;
  public boolean observe(long at,double distance,double accuracy) { return observe(at,distance,accuracy,35); }
  public boolean observe(long at,double distance,double accuracy,double radius) {
-  if(at<=lastAt || at<=0 || !Double.isFinite(distance) || distance<0 || !Double.isFinite(accuracy) || accuracy<0 || accuracy>65) return false;
+  if(!Double.isFinite(radius) || radius<=0 || at<=lastAt || at<=0 || !Double.isFinite(distance) || distance<0 || !Double.isFinite(accuracy) || accuracy<0 || accuracy>65) return false;
   String candidate=distance<=radius?"inside":distance>=radius+12?"outside":presence;
   if(candidate.equals("unknown")) return false;
   boolean continuous=lastAt==0 || at-lastAt<=60000;

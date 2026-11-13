@@ -86,6 +86,73 @@ class DeliveryLocationService : Service() {
         }
         fun requestedGeneration() = requestedSession.generation
         fun clearReturnObservation(context: Context) { journalExecutor.execute { NativeReturnObserver.clear(context) } }
+        fun acknowledgeReturnEvent(context: Context, eventId: String) {
+            journalExecutor.execute { NativeReturnObserver.acknowledge(context, eventId) }
+        }
+        private data class DrainRequest(val requestId: String, val shiftId: String, val deliveryId: String,
+            val generation: Long, val sampleIds: Set<String>)
+        // Owned by journalExecutor. A watermark avoids waiting forever on new live fixes.
+        private val drainRequests = LinkedHashMap<String, DrainRequest>()
+        private var failedAppendSampleId: String? = null
+        private fun replyDrain(request: DrainRequest, error: String? = null) {
+            dispatchHandler.post {
+                MainActivity.sendNativeMessage(JSONObject().put("type", "shift_tracker_location:drained")
+                    .put("requestId", request.requestId).put("shiftId", request.shiftId).put("deliveryId", request.deliveryId)
+                    .apply { if (error != null) put("error", error) }.toString())
+            }
+        }
+        fun requestDrain(context: Context, requestId: String, shiftId: String, deliveryId: String) {
+            if (requestId.isBlank() || requestId.length > 256 || shiftId.isBlank() || shiftId.length > 128 || deliveryId.isBlank() || deliveryId.length > 128) return
+            val app = context.applicationContext
+            journalExecutor.execute {
+                val snapshot = NativeShiftState.read(app)
+                val request = DrainRequest(requestId, shiftId, deliveryId, sessionGate.generation, emptySet())
+                if (snapshot?.shiftActive != true || snapshot.isStale || snapshot.shiftId != shiftId || snapshot.activityId != deliveryId) {
+                    replyDrain(request, "stale_identity"); return@execute
+                }
+                val samples = journalStore(app).pendingForDrain()
+                if (samples == null || failedAppendSampleId?.startsWith("$deliveryId:") == true) {
+                    replyDrain(request, "journal_unavailable"); return@execute
+                }
+                if (drainRequests.size >= 8 && requestId !in drainRequests) {
+                    replyDrain(request, "too_many_requests"); return@execute
+                }
+                val watermark = request.copy(sampleIds = samples.filter { it.deliveryId == deliveryId }.map { it.sampleId }.toSet())
+                drainRequests[requestId] = watermark
+                checkDrainRequests(app)
+                if (requestId in drainRequests) dispatchHandler.postDelayed({
+                    journalExecutor.execute {
+                        if (drainRequests[requestId] === watermark) drainRequests.remove(requestId)?.let { replyDrain(it, "replay_timeout") }
+                    }
+                }, 60_000L)
+                // Retry delivery of this watermark even if an earlier bridge reply was lost.
+                if (watermark.sampleIds.isNotEmpty()) dispatchHandler.post {
+                    beginReplayOnUiThread()
+                    replaySamplesOnUiThread(samples.filter { it.sampleId in watermark.sampleIds }) { sample ->
+                        if (sessionGate.generation == watermark.generation) MainActivity.sendNativeMessage(sampleMessageForDrain(sample))
+                    }
+                }
+            }
+        }
+        private fun sampleMessageForDrain(sample: NativeLocationSample) = JSONObject()
+            .put("type", "shift_tracker_location:sample").put("sample", sample.toJson()).toString()
+        private fun checkDrainRequests(context: Context) {
+            if (drainRequests.isEmpty()) return
+            val snapshot = NativeShiftState.read(context)
+            val remaining = journalStore(context).pendingForDrain()?.map { it.sampleId }?.toSet()
+            val completed = drainRequests.values.filter { request ->
+                val error = when {
+                    snapshot?.shiftActive != true || snapshot.isStale || snapshot.shiftId != request.shiftId ||
+                        snapshot.activityId != request.deliveryId || sessionGate.generation != request.generation -> "stale_identity"
+                    remaining == null || failedAppendSampleId?.startsWith("${request.deliveryId}:") == true -> "journal_unavailable"
+                    else -> null
+                }
+                if (error != null) { replyDrain(request, error); true }
+                else if (NativeDrainPolicy.complete(request.sampleIds, remaining)) { replyDrain(request); true }
+                else false
+            }
+            completed.forEach { drainRequests.remove(it.requestId) }
+        }
         @Volatile private var recoveryQueueCount: Int? = null
 
         private val dispatchHandler = Handler(Looper.getMainLooper())
@@ -165,6 +232,7 @@ class DeliveryLocationService : Service() {
             if (service != null) service.acknowledge(sampleId) else journalExecutor.execute {
                 val store = journalStore(context)
                 store.acknowledge(sampleId)
+                checkDrainRequests(context)
                 recoveryQueueCount = store.pendingCount()
                 dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
             }
@@ -389,8 +457,10 @@ class DeliveryLocationService : Service() {
     }
 
     private fun buildLocationRequest(nearStore: Boolean): LocationRequest = if (idleMonitoring()) {
-        LocationRequest.Builder(if (ShiftMonitorController.highAccuracy(this)) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, 30_000L)
-            .setMinUpdateIntervalMillis(15_000L).setMinUpdateDistanceMeters(0f).setMaxUpdateDelayMillis(30_000L).build()
+        val approaching = samplingMode == "shift_near_store"
+        LocationRequest.Builder(if (approaching || ShiftMonitorController.highAccuracy(this)) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, if (approaching) 5_000L else 30_000L)
+            .setMinUpdateIntervalMillis(if (approaching) 2_000L else 15_000L).setMinUpdateDistanceMeters(0f)
+            .setMaxUpdateDelayMillis(if (approaching) 5_000L else 30_000L).build()
     } else if (nearStore) {
         // Delivery start and return use time-based fixes so parking immediately
         // after crossing cannot leave confirmation waiting for another 5m move.
@@ -449,7 +519,9 @@ class DeliveryLocationService : Service() {
         val distance = NativeTrackingPolicy.distanceMetres(location.latitude, location.longitude, profile.latitude, profile.longitude)
         lastRealDistanceMetres = distance.toFloat()
         val currentPolicyMode = if (samplingMode == "near_store") NativeTrackingPolicy.SamplingMode.NEAR_STORE else NativeTrackingPolicy.SamplingMode.ROUTE
-        val nextMode = if (distance <= if (currentPolicyMode == NativeTrackingPolicy.SamplingMode.NEAR_STORE) NativeTrackingPolicy.NEAR_STORE_EXIT_METRES else NativeTrackingPolicy.NEAR_STORE_ENTER_METRES) "near_store" else "route"
+        val nextMode = if (idleMonitoring()) NativeTrackingPolicy.shiftSamplingMode(distance,
+            if (location.hasSpeed()) location.speed.toDouble() else null, ShiftMonitorController.highAccuracy(this))
+        else if (distance <= if (currentPolicyMode == NativeTrackingPolicy.SamplingMode.NEAR_STORE) NativeTrackingPolicy.NEAR_STORE_EXIT_METRES else NativeTrackingPolicy.NEAR_STORE_ENTER_METRES) "near_store" else "route"
         if (nextMode == samplingMode || !running || deliveryId != id) return
         samplingMode = nextMode
         val generation = ++requestGeneration
@@ -549,6 +621,7 @@ class DeliveryLocationService : Service() {
             lastSampleRejection = rejection
             return
         }
+        updateSamplingModeFor(location, id)
         if (idleMonitoring()) {
             // At-store fixes update bounded liveness only; never append a personal route.
             acceptedFixProgress.accepted("$id:${location.time}", SystemClock.elapsedRealtime())
@@ -557,7 +630,6 @@ class DeliveryLocationService : Service() {
             emitState("sample_received", id, "Shift monitoring fix accepted; no route retained")
             return
         }
-        updateSamplingModeFor(location, id)
         val sample = NativeLocationSample(
             sampleId = "$id:${location.time}",
             deliveryId = id,
@@ -582,11 +654,17 @@ class DeliveryLocationService : Service() {
         journalExecutor.execute {
             if (!sessionGate.isCurrent(journalToken) || sessionStoreIdentity != NativeShiftState.storeProfile(this)?.identity) return@execute
             val result = sampleStore.append(sample)
+            if (result is NativeSampleStore.AppendResult.Failed) failedAppendSampleId = sample.sampleId
+            else if (failedAppendSampleId == sample.sampleId) failedAppendSampleId = null
             recoveryQueueCount = sampleStore.pendingCount()
             // Native observation and persistence do not wait on bridge dispatch or React.
             val observation = synchronized(sessionGate) {
                 if (result !is NativeSampleStore.AppendResult.Failed && sessionGate.isCurrent(journalToken) && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity)
                     returnObserver.observe(sample, observationGeneration, observationStoreIdentity) else null
+            }
+            // The audible alert follows durable confirmation on this worker. It never waits for React/replay.
+            if ((observation?.optLong("confirmedAt") ?: 0L) > 0L) {
+                runCatching { NativeReturnObserver.postPendingAlert(this) { at -> TrackerNotifications.showGeofence(this, true, at) } }
             }
             if (observation != null) dispatchHandler.post {
                 if (sessionGate.isCurrent(journalToken) && running && sessionStoreIdentity == NativeShiftState.storeProfile(this)?.identity) {
@@ -595,6 +673,7 @@ class DeliveryLocationService : Service() {
                         lastNotifiedConfirmation = observation.optLong("nativeConfirmedAt")
                         nativeReturned = detected
                         runCatching { startForegroundCompat() }
+                        emitState("sample_received", id, "Native store return persisted; delivery completion remains explicit")
                     }
                 }
             }
@@ -687,6 +766,7 @@ class DeliveryLocationService : Service() {
     fun acknowledge(sampleId: String) {
         journalExecutor.execute {
             sampleStore.acknowledge(sampleId)
+            checkDrainRequests(this)
             recoveryQueueCount = sampleStore.pendingCount()
             dispatchHandler.post { MainActivity.nativeEvidenceDrained() }
         }
@@ -789,9 +869,9 @@ class DeliveryLocationService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         else startForeground(NOTIFICATION_ID, notification)
         if (nativeReturned) {
-            val id = deliveryId
-            val generation = activeCommandToken?.generation
-            journalExecutor.execute { NativeReturnObserver.notificationPosted(this, id, generation) }
+            journalExecutor.execute {
+                runCatching { NativeReturnObserver.postPendingAlert(this) { at -> TrackerNotifications.showGeofence(this, true, at) } }
+            }
         }
     }
 

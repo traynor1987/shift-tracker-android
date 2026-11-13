@@ -143,8 +143,8 @@ object TrackerNotifications {
         manager(context).cancel(WORK_NOTIFICATION_ID)
     }
 
-    fun showGeofence(context: Context, returned: Boolean, observedAtEpochMs: Long) {
-        if (!notificationsAllowed(context)) return
+    fun showGeofence(context: Context, returned: Boolean, observedAtEpochMs: Long): Boolean {
+        if (!notificationsAllowed(context)) return false
         ensureChannels(context)
         val title = if (returned) "BACK IN THE STORE ZONE" else "LEFT THE STORE ZONE"
         val text = if (returned) "Real geofence confirmed · you are back inside." else "Real geofence confirmed · delivery trip is now outside."
@@ -174,5 +174,6 @@ object TrackerNotifications {
             .setOnlyAlertOnce(false)
             .setTimeoutAfter(45_000L)
             .build())
+        return true
     }
 }

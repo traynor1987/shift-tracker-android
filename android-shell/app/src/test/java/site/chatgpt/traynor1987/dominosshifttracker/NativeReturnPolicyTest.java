@@ -2,6 +2,10 @@ package site.chatgpt.traynor1987.dominosshifttracker;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class NativeReturnPolicyTest {
+ @Test public void invalidRadiusCannotCreateAPresenceOrCrossing() { NativeReturnPolicy p=new NativeReturnPolicy(); p.observe(1000,0,5,Double.NaN); assertEquals(0,p.lastAt); p.observe(2000,100,5,-1); assertEquals(0,p.lastAt); }
+ @Test public void invalidCoordinatesCannotQualifyReturn() { assertFalse(NativeReturnPolicy.acceptsFix(1000,1000,91,0,5)); assertFalse(NativeReturnPolicy.acceptsFix(1000,1000,0,Double.NaN,5)); }
+ @Test public void delayedAndFutureFixesCannotQualifyReturn() { assertTrue(NativeReturnPolicy.acceptsFix(1000,31000,0,0,5)); assertFalse(NativeReturnPolicy.acceptsFix(1000,31001,0,0,5)); assertFalse(NativeReturnPolicy.acceptsFix(32001,30000,0,0,5)); }
+
  @Test public void returnWithoutWebView() { NativeReturnPolicy p=new NativeReturnPolicy(); p.observe(1000,0,5); p.observe(3000,100,5); assertTrue(p.observe(70000,0,5)); assertEquals(70000,p.confirmedAt); assertEquals(0,p.exactEntryAt); }
  @Test public void continuousReturnPreservesFirstObservation() { NativeReturnPolicy p=new NativeReturnPolicy(); p.observe(1000,0,5);p.observe(3000,100,5);p.observe(40000,100,5); assertFalse(p.observe(65000,34,10));assertTrue(p.observe(67000,33,10));assertEquals(65000,p.firstInsideAt);assertEquals(65000,p.exactEntryAt); }
  @Test public void inaccurateRejected() { NativeReturnPolicy p=new NativeReturnPolicy();assertFalse(p.observe(1000,0,66));assertEquals(0,p.lastAt); }

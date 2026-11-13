@@ -14,14 +14,14 @@ import org.json.JSONObject
 @RunWith(AndroidJUnit4::class)
 class NativeReturnPersistenceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val start = System.currentTimeMillis() - 300_000L
-    private fun mirror(id: String = "synthetic-delivery", enabled: Boolean = true, delivered: Int = 2, profile: JSONObject? = null): ShiftSnapshot {
+    private val start = System.currentTimeMillis() - 120_000L
+    private fun mirror(id: String = "synthetic-delivery", enabled: Boolean = true, delivered: Int = 2, profile: JSONObject? = null, latestDeliveredAt: Long = start + 60_000): ShiftSnapshot {
         val raw = JSONObject().put("stateRevision", "synthetic-1").put("shiftId", "synthetic-shift")
             .put("activityId", id).put("shiftActive", true).put("shiftStartedAtEpochMs", start)
             .put("activityStartedAtEpochMs", start).put("activity", "delivery_double")
             .put("requiredCustomers", 2).put("deliveredCustomers", delivered)
             .put("storeExitAtEpochMs", start + 10_000).put("storeExitObserved", true)
-            .put("latestDeliveredAtEpochMs", start + 60_000)
+            .put("latestDeliveredAtEpochMs", latestDeliveredAt)
             .put("settings", JSONObject().put("liveNotification", false).put("alwaysOnShiftMonitoring", enabled))
         profile?.let { raw.put("storeProfile", it) }
         var value: ShiftSnapshot? = null
@@ -35,6 +35,61 @@ class NativeReturnPersistenceTest {
         NativeReturnObserver.clear(context)
         context.getSharedPreferences("shift_monitor_v1", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("shift_tracker_native_mirror_v1", Context.MODE_PRIVATE).edit().clear().commit()
+    }
+    @Test fun eventSurvivesRecreationAndAcknowledgesOnlyItsStableIdentity() {
+        NativeReturnObserver(context).observe(point(), 7)
+        val event = NativeReturnObserver.pendingEvent(context)!!
+        assertEquals(point().timestampEpochMs, event.getLong("timestampEpochMs"))
+        assertEquals("native_gps", event.getString("source"))
+        assertEquals(5.0, event.getDouble("accuracy"), 0.0)
+        assertEquals("pending", event.getString("status"))
+        NativeReturnObserver(context).observe(point(start + 121_000), 7)
+        assertEquals(event.toString(), NativeReturnObserver.pendingEvent(context)!!.toString())
+        assertFalse(NativeReturnObserver.acknowledge(context, "wrong-event"))
+        assertTrue(NativeReturnObserver.acknowledge(context, event.getString("eventId")))
+        assertNull(NativeReturnObserver.pendingEvent(context))
+        assertTrue(NativeReturnObserver.hasReturn(context, "synthetic-delivery", 7))
+    }
+    @Test fun alertRunsAfterPersistenceWithoutActivityAndIsNotRepeated() {
+        var alerts = 0
+        assertFalse(NativeReturnObserver.postPendingAlert(context) { alerts++; true })
+        NativeReturnObserver(context).observe(point(), 7)
+        assertTrue(NativeReturnObserver.postPendingAlert(context) { at ->
+            assertEquals(point().timestampEpochMs, at)
+            assertNotNull(NativeReturnObserver.pendingEvent(context))
+            alerts++; true
+        })
+        assertTrue(NativeReturnObserver.pendingEvent(context)!!.getLong("notificationAt") > 0)
+        assertFalse(NativeReturnObserver.postPendingAlert(context) { alerts++; true })
+        assertEquals(1, alerts)
+    }
+    @Test fun disabledNotificationIsRetryable() {
+        NativeReturnObserver(context).observe(point(), 7)
+        assertFalse(NativeReturnObserver.postPendingAlert(context) { false })
+        assertEquals(0L, NativeReturnObserver.pendingEvent(context)!!.getLong("notificationAt"))
+        assertTrue(NativeReturnObserver.postPendingAlert(context) { true })
+    }
+    @Test fun laterDeliveredRequiresFreshReturnEvidence() {
+        val first = System.currentTimeMillis() - 1_000
+        NativeReturnObserver(context).observe(point(at=first), 7)
+        val oldId = NativeReturnObserver.pendingEvent(context)!!.getString("eventId")
+        val deliveredAt = System.currentTimeMillis()
+        mirror(latestDeliveredAt=deliveredAt)
+        assertNull(NativeReturnObserver.pendingEvent(context))
+        NativeReturnObserver(context).observe(point(at=deliveredAt + 1), 7)
+        val fresh = NativeReturnObserver.pendingEvent(context)!!
+        assertTrue(fresh.getLong("observedAtEpochMs") >= deliveredAt)
+        assertEquals(0L, fresh.getLong("entryAt"))
+        assertNotEquals(oldId, fresh.getString("eventId"))
+    }
+    @Test fun oldFixCannotCreateEventAfterWorkerDelay() {
+        assertNull(NativeReturnObserver(context).observe(point(start + 80_000), 7))
+        assertNull(NativeReturnObserver.pendingEvent(context))
+    }
+    @Test fun eventIsNotExposedToAnotherDeliveryOrShift() {
+        NativeReturnObserver(context).observe(point(), 7)
+        mirror(id = "another-delivery")
+        assertNull(NativeReturnObserver.pendingEvent(context))
     }
     @Test fun returnWithoutActivitySurvivesObserverRecreation() {
         val value = NativeReturnObserver(context).observe(point(), 7)!!
@@ -80,13 +135,22 @@ class NativeReturnPersistenceTest {
         assertFalse(NativeReturnObserver.hasReturn(context, "synthetic-delivery", 8))
     }
     @Test fun inaccurateFixCannotConfirm() {
-        val value=NativeReturnObserver(context).observe(point(accuracy=66f),7)!!
-        assertEquals(0L,value.getLong("confirmedAt"))
+        assertNull(NativeReturnObserver(context).observe(point(accuracy=66f),7))
     }
     @Test fun doubleOutstandingCannotQueueCompletion() {
         mirror(delivered=1)
         NativeReturnObserver(context).observe(point(),7)
         assertFalse(NativeShiftState.queueObservedReturn(context,"synthetic-shift","synthetic-delivery"))
+        assertNull(NativeReturnObserver.pendingEvent(context))
+        assertFalse(NativeReturnObserver.postPendingAlert(context) { fail("Outstanding customer must not sound a return alert"); true })
+    }
+    @Test fun eventLedgerIsBoundedAcrossDeliveries() {
+        repeat(70) { index ->
+            val id = "synthetic-$index"
+            mirror(id=id)
+            NativeReturnObserver(context).observe(point(at=System.currentTimeMillis(), id=id), index.toLong())
+        }
+        assertEquals(64, NativeReturnObserver.diagnostics(context).getInt("nativeReturnEventCount"))
     }
     @Test fun explicitOptOutClearsMonitoringIdentity() {
         ShiftMonitorController.sync(context, mirror())

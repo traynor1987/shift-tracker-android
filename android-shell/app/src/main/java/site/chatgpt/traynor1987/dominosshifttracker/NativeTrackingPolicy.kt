@@ -17,6 +17,14 @@ object NativeTrackingPolicy {
 
     enum class SamplingMode { NEAR_STORE, ROUTE }
 
+    /** Shift idle monitoring never stores a route; approach precision is temporary. */
+    fun shiftSamplingMode(distanceMetres: Double, speedMetresPerSecond: Double?, highAccuracy: Boolean): String = when {
+        highAccuracy -> "shift_high_accuracy"
+        distanceMetres.isFinite() && distanceMetres <= NEAR_STORE_ENTER_METRES &&
+            (speedMetresPerSecond == null || !speedMetresPerSecond.isFinite() || speedMetresPerSecond > 1.0) -> "shift_near_store"
+        else -> "shift_adaptive"
+    }
+
     fun acceptsProviderTimestamp(sessionStartedAtEpochMs: Long, providerTimestampEpochMs: Long): Boolean =
         providerTimestampEpochMs > 0L && providerTimestampEpochMs >= sessionStartedAtEpochMs - 2_000L
 

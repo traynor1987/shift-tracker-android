@@ -7,7 +7,7 @@ data class NativeStoreProfile(val id: String, val latitude: Double, val longitud
     val identity get() = "$id|$latitude|$longitude|$radius|$verified|$revision"
     fun toJson() = JSONObject().put("id", id).put("latitude", latitude).put("longitude", longitude).put("radius", radius).put("verified", verified).put("revision", revision)
     companion object {
-        val ORMSKIRK = NativeStoreProfile("ormskirk", NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE, 35.0, true, "protected-v1")
+        val ORMSKIRK = NativeStoreProfile("ormskirk", NativeTrackingPolicy.REAL_GEOFENCE_LATITUDE, NativeTrackingPolicy.REAL_GEOFENCE_LONGITUDE, 35.0, true, "ormskirk-protected-v1")
         fun parse(raw: JSONObject?): NativeStoreProfile? {
             if (raw == null || raw.optString("id") == "ormskirk") return ORMSKIRK
             if (raw.optString("id") != "maghull") return null

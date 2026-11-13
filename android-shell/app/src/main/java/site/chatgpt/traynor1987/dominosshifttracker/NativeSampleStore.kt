@@ -102,6 +102,10 @@ class NativeSampleStore(private val context: Context) {
     @Synchronized
     fun pending(): List<NativeLocationSample> = runCatching { snapshot.pending() }.getOrDefault(emptyList())
 
+    /** Completion barriers must fail closed on an unreadable journal. */
+    @Synchronized
+    fun pendingForDrain(): List<NativeLocationSample>? = runCatching { snapshot.pending() }.getOrNull()
+
     @Synchronized
     fun pendingCount(): Int = runCatching { snapshot.count() }.getOrDefault(0)
 
