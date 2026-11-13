@@ -1,17 +1,17 @@
 {
   "channel": "stable",
-  "versionName": "2.2.73",
-  "versionCode": 78,
-  "minimumWebVersion": "2.1.149",
-  "apkFile": "Shift-Tracker-2.2.73.apk",
-  "sha256": "f8065898ce11685233c0e76db142ed90c96932551ab9232224dcc0dc2b3a73ac",
+  "versionName": "2.2.76",
+  "versionCode": 81,
+  "minimumWebVersion": "2.1.251",
+  "apkFile": "Shift-Tracker-2.2.76.apk",
+  "sha256": "ce8c917d8509d27d6f118962d659c8b962a84f668e4ff5b29571afbf18e54cb2",
   "releaseNotes": [
-    "Verified native Android and Wear OS update."
+    "Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending."
   ],
   "wear": {
-    "versionName": "2.2.73",
-    "versionCode": 78,
-    "asset": "Shift-Tracker-Wear-2.2.73.apk",
-    "sha256": "2724fb9297eb7bf6a499c2e338da3e71cc1a308d2acc0ca429820065a5dcb26b"
+    "versionName": "2.2.76",
+    "versionCode": 81,
+    "asset": "Shift-Tracker-Wear-2.2.76.apk",
+    "sha256": "6855c6bd33a78f88f14679a0ed4e2cba57537b21229039bcb7a83c0c3e3d51fc"
   }
 }

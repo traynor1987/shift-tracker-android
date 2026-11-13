@@ -31726,7 +31726,7 @@ function NativeUpdateStatusCards({
             </button>
             <details className="android-update-help">
               <summary>Test release updates</summary>
-              <p>First install from an older APK: <a href="https://github.com/traynor1987/shift-tracker-android/releases/download/v2.2.75-rc.1/Shift-Tracker-2.2.75.apk" target="_blank" rel="noopener noreferrer">Download signed GPS profile update 2.2.75</a>. This opens GitHub for the one-time download; Android asks you to install it. Afterward, signed test-release checks work here. Physical Maghull GPS acceptance is still pending.</p>
+              <p>First install from an older APK: <a href="https://github.com/traynor1987/shift-tracker-android/releases/download/v2.2.76/Shift-Tracker-2.2.76.apk" target="_blank" rel="noopener noreferrer">Download signed GPS and backup update 2.2.76</a>. This opens GitHub for the one-time download; Android asks you to install it. Afterward, signed test-release checks work here. Physical Maghull GPS acceptance is still pending.</p>
               <p>Optional candidate builds have passed automated release checks but still require physical device acceptance.</p>
               <button type="button" className="android-update-check" onClick={() => {
                 if (window.confirm("Check for a signed test release? Physical GPS acceptance may still be pending. Your data stays in place.")) checkAndroidUpdate("candidate");
