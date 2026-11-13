@@ -62,6 +62,8 @@ class MainActivity : ComponentActivity() {
         private const val WORK_NOTIFICATION_PERMISSION_REQUEST = 2106
         private const val SHIFT_NOTIFICATION_PERMISSION_REQUEST = 2107
         private const val MAX_EXPORTED_FILE_CHARS = 20_000_000
+        // Survives Activity replacement; private staged files survive process death.
+        private val fileExportExecutor = Executors.newSingleThreadExecutor()
         private const val MAX_SHARED_FILE_BYTES = 25_000_000
         private const val PAGE_READY_TIMEOUT_MS = 12_000L
 
@@ -90,7 +92,7 @@ class MainActivity : ComponentActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var cameraCaptureUri: Uri? = null
     private var cameraCaptureFile: File? = null
-    private var pendingFileSave: PendingFileSave? = null
+    private var pendingFileSave: String? = null
     private var pendingWorkNotification: String? = null
     private var wearConnectionKnown = false
     private var wearConnected = false
@@ -98,13 +100,6 @@ class MainActivity : ComponentActivity() {
     private val pageReadinessRecoveryPolicy = PageReadinessRecoveryPolicy()
     private var rendererRecoveryDialog: AlertDialog? = null
     private var pageReadinessDialog: AlertDialog? = null
-
-    private data class PendingFileSave(
-        val requestId: String,
-        val filename: String,
-        val mimeType: String,
-        val content: String,
-    )
 
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val callback = fileChooserCallback ?: return@registerForActivityResult
@@ -125,26 +120,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private val createDocumentLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val request = pendingFileSave ?: return@registerForActivityResult
+        val requestId = pendingFileSave ?: return@registerForActivityResult
         pendingFileSave = null
-        if (result.resultCode != Activity.RESULT_OK || result.data?.data == null) {
-            sendFileSaveResult(request.requestId, "cancelled", "No file was replaced or created")
-            return@registerForActivityResult
+        val uri = result.data?.data
+        val cancelled = result.resultCode != Activity.RESULT_OK || uri == null
+        if (!cancelled) runCatching {
+            contentResolver.takePersistableUriPermission(uri!!, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
-        val uri = result.data!!.data!!
-        runCatching {
-            contentResolver.openOutputStream(uri, "w")?.use { output ->
-                output.write(request.content.toByteArray(StandardCharsets.UTF_8))
-            } ?: error("Android did not provide a writable destination")
-        }.onSuccess {
-            sendFileSaveResult(request.requestId, "saved", "Saved with the Android document picker")
-        }.onFailure {
-            sendFileSaveResult(request.requestId, "error", "Android could not write the selected file")
+        fileExportExecutor.execute {
+            val export = runCatching { NativeFileExport.load(exportDirectory()) }.getOrNull() ?: return@execute
+            if (export.id() != requestId || export.isTerminal) return@execute
+            if (cancelled) {
+                runCatching { export.complete("cancelled", "picker", "Backup save cancelled") }
+                reportExport(export)
+            } else {
+                runCatching { export.setDestination(uri.toString()) }
+                    .onSuccess { writeExport(export, uri!!) }
+                    .onFailure { failExport(export, "staging") }
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingFileSave = savedInstanceState?.getString("pendingBackupRequest")
         applyWindowOrientation(resources.configuration)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -157,6 +156,10 @@ class MainActivity : ComponentActivity() {
         configureWebView(webView)
         setContentView(webView)
         queueActionFromIntent(intent)
+        fileExportExecutor.execute {
+            val export = runCatching { NativeFileExport.load(exportDirectory()) }.getOrNull()
+            if (export != null && !export.isTerminal && export.destination().isNotBlank()) writeExport(export, Uri.parse(export.destination()))
+        }
         // A newly created WebView is blank even when the Activity receives a
         // non-null state bundle. Restore the WebView state explicitly; if
         // Android reclaimed it, load the trusted hosted PWA instead of leaving
@@ -238,6 +241,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        pendingFileSave?.let { outState.putString("pendingBackupRequest", it) }
         if (::webView.isInitialized) webView.saveState(outState)
         super.onSaveInstanceState(outState)
     }
@@ -249,7 +253,7 @@ class MainActivity : ComponentActivity() {
         trustedReplyProxy = null
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
-        pendingFileSave?.let { sendFileSaveResult(it.requestId, "cancelled", "The save was cancelled") }
+        // Export ownership stays on disk; destruction is not user cancellation.
         pendingFileSave = null
         cameraCaptureFile?.delete()
         rendererRecoveryDialog?.dismiss()
@@ -478,7 +482,8 @@ class MainActivity : ComponentActivity() {
             "shift_tracker_location:stop_all" -> stopNativeLocation(null, stopAll = true)
             "shift_tracker_location:background_request" -> requestBackgroundLocation()
             "shift_tracker_store_proof:request" -> requestStoreProofLocation(message.optString("requestId"))
-            "shift_tracker_file:save" -> requestNativeFileSave(message)
+            "shift_tracker_file:capabilities" -> postNativeMessage(JSONObject().put("type", "shift_tracker_file:capabilities").put("requestId", message.optString("requestId")).put("protocol", 2).toString())
+            "shift_tracker_file:save", "shift_tracker_file:save_begin", "shift_tracker_file:save_chunk", "shift_tracker_file:save_commit", "shift_tracker_file:save_status", "shift_tracker_file:save_abort" -> requestNativeFileSave(message)
             "shift_tracker_file:share" -> requestNativeShare(message)
             "shift_tracker_state:sync" -> {
                 val previousProfile = NativeShiftState.storeProfile(this)
@@ -561,6 +566,7 @@ class MainActivity : ComponentActivity() {
             put("type", "shift_tracker_shell:ready")
             put("shellVersion", BuildConfig.VERSION_NAME)
             put("bridgeVersion", BRIDGE_VERSION)
+            put("fileExportProtocol", 2)
             put("trustedOrigin", TRUSTED_ORIGIN)
             put("trackingActive", DeliveryLocationService.isRunning())
             put("dispatchNotificationAccess", DispatchNotificationStore.accessEnabled(this@MainActivity))
@@ -925,34 +931,116 @@ class MainActivity : ComponentActivity() {
         }.onFailure { openBackgroundPermissionSettings(deliveryId) }
     }
 
+    private fun exportDirectory() = File(filesDir, "backup-export")
+
+    private fun reportExport(export: NativeFileExport) {
+        val payload = JSONObject().put("type", "shift_tracker_file:save_result")
+            .put("requestId", export.id()).put("status", export.status()).put("stage", export.stage())
+            .put("message", export.message()).put("verified", export.status() == "saved")
+            .put("bytes", export.bytes()).put("sha256", export.hash()).toString()
+        activeActivity?.postNativeMessageOnUiThread(payload)
+    }
+
+    private fun failExport(export: NativeFileExport, stage: String) {
+        val message = when (stage) {
+            "verify" -> "The selected file could not be read back correctly. Try another location; tracker data is unchanged."
+            "write" -> "Android could not finish writing the selected file. Try another location; tracker data is unchanged."
+            "picker" -> "Android could not open the document picker. Retry the export."
+            "size" -> "This export exceeds the 512 MiB safety limit. No tracker data was changed."
+            else -> "Android could not stage this backup. Check free device space and retry."
+        }
+        runCatching { export.complete("error", stage, message) }
+        sendFileSaveResult(export.id(), "error", message, stage)
+    }
+
+    private fun writeExport(export: NativeFileExport, uri: Uri) {
+        try {
+            // Truncate a reused document and close it before opening readback.
+            export.writeAndVerify({ contentResolver.openOutputStream(uri, "wt") }, { contentResolver.openInputStream(uri) })
+            reportExport(export)
+        } catch (failure: Exception) { failExport(export, (failure as? NativeFileExport.ExportException)?.stage ?: "write") }
+        finally { runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } }
+    }
+
+    private fun launchExportPicker(export: NativeFileExport) {
+        val activity = activeActivity ?: return // Resumed web can query and reopen this durable pending request.
+        activity.runOnUiThread {
+            if (activity.isDestroyed || activity.pendingFileSave == export.id()) return@runOnUiThread
+            activity.pendingFileSave = export.id()
+            runCatching {
+                activity.createDocumentLauncher.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = export.mimeType()
+                    putExtra(Intent.EXTRA_TITLE, export.filename())
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                })
+            }.onFailure {
+                activity.pendingFileSave = null
+                fileExportExecutor.execute { failExport(export, "picker") }
+            }
+        }
+    }
+
     private fun requestNativeFileSave(message: JSONObject) {
         val requestId = message.optString("requestId").trim()
-        val filename = message.optString("filename").trim()
-        val mimeType = message.optString("mimeType").trim().substringBefore(';').lowercase()
-        val content = message.optString("content", null)
-        val safeName = filename.length in 1..120 && filename == File(filename).name &&
-            filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
-        val allowedType = (mimeType == "application/json" && filename.endsWith(".json", true)) ||
-            (mimeType == "text/csv" && filename.endsWith(".csv", true))
-        if (requestId.isEmpty() || requestId.length > 128 || !safeName || !allowedType || content == null || content.length > MAX_EXPORTED_FILE_CHARS) {
-            if (requestId.isNotEmpty() && requestId.length <= 128) sendFileSaveResult(requestId, "error", "The requested export was not an allowed JSON or CSV file")
-            return
+        if (requestId.isEmpty() || requestId.length > 128) return
+        val operation = message.optString("type")
+        fileExportExecutor.execute {
+            var export: NativeFileExport? = null
+            try {
+                export = NativeFileExport.load(exportDirectory())
+                if (operation == "shift_tracker_file:save_status") {
+                    if (export?.id() == requestId) {
+                        if (export.isTerminal) reportExport(export)
+                        else if (export.stage() == "picker" && export.destination().isBlank()) launchExportPicker(export)
+                    } else sendFileSaveResult(requestId, "error", "The previous export receipt is unavailable. Retry export.", "recovery")
+                    return@execute
+                }
+                if (operation == "shift_tracker_file:save_abort") {
+                    if (export?.id() == requestId && export.stage() == "staging") { export.complete("cancelled", "staging", "Backup transfer cancelled"); reportExport(export) }
+                    return@execute
+                }
+                if (operation == "shift_tracker_file:save" || operation == "shift_tracker_file:save_begin") {
+                    val filename = message.optString("filename").trim()
+                    val mime = message.optString("mimeType").substringBefore(';').lowercase()
+                    val safeName = filename.length in 1..120 && filename == File(filename).name && filename.matches(Regex("[A-Za-z0-9][A-Za-z0-9._ -]*"))
+                    val allowed = (mime == "application/json" && filename.endsWith(".json", true)) || (mime == "text/csv" && filename.endsWith(".csv", true))
+                    if (!safeName || !allowed) { sendFileSaveResult(requestId, "error", "Choose a JSON or CSV export", "metadata"); return@execute }
+                    val legacy = operation == "shift_tracker_file:save"
+                    val content = if (legacy) message.optString("content", null) else null
+                    if (legacy && (content == null || content.length > MAX_EXPORTED_FILE_CHARS)) { sendFileSaveResult(requestId, "error", "Use the latest web export for large backups", "size"); return@execute }
+                    if (export != null && !export.isTerminal) {
+                        // An explicit retry may replace an interrupted upload only; never an open picker/write.
+                        if (export.stage() == "staging") export.complete("cancelled", "staging", "Replaced by a new export")
+                        else { sendFileSaveResult(requestId, "error", "Finish the current file save first", "busy"); return@execute }
+                    }
+                    export = NativeFileExport.begin(exportDirectory(), requestId, filename, mime, content?.length?.toLong() ?: message.optLong("characters", -1))
+                    if (legacy) {
+                        var offset = 0; var sequence = 0
+                        while (offset < content!!.length) {
+                            var end = minOf(content.length, offset + 48 * 1024)
+                            if (end < content.length && Character.isHighSurrogate(content[end - 1])) end--
+                            export.append(sequence++, content.substring(offset, end)); offset = end
+                        }
+                        export.finish(); launchExportPicker(export)
+                    } else sendExportProgress(requestId, -1)
+                    return@execute
+                }
+                if (export == null || export.id() != requestId || export.isTerminal) { sendFileSaveResult(requestId, "error", "The staged backup is unavailable. Retry export.", "staging"); return@execute }
+                when (operation) {
+                    "shift_tracker_file:save_chunk" -> { val sequence = message.optInt("sequence", -1); export.append(sequence, message.getString("content")); sendExportProgress(requestId, sequence) }
+                    "shift_tracker_file:save_commit" -> { export.finish(); launchExportPicker(export) }
+                }
+            } catch (failure: Exception) {
+                val stage = (failure as? NativeFileExport.ExportException)?.stage ?: "staging"
+                if (export?.id() == requestId) failExport(export, stage)
+                else sendFileSaveResult(requestId, "error", "Android could not stage the backup. Check free space and retry.", stage)
+            }
         }
-        if (pendingFileSave != null) {
-            sendFileSaveResult(requestId, "error", "Finish the current file save first")
-            return
-        }
-        pendingFileSave = PendingFileSave(requestId, filename, mimeType, content)
-        runCatching {
-            createDocumentLauncher.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = mimeType
-                putExtra(Intent.EXTRA_TITLE, filename)
-            })
-        }.onFailure {
-            pendingFileSave = null
-            sendFileSaveResult(requestId, "error", "Android could not open the document picker")
-        }
+    }
+
+    private fun sendExportProgress(requestId: String, sequence: Int) {
+        activeActivity?.postNativeMessageOnUiThread(JSONObject().put("type", "shift_tracker_file:progress").put("requestId", requestId).put("sequence", sequence).toString())
     }
 
     private fun requestNativeShare(message: JSONObject) {
@@ -985,8 +1073,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendFileSaveResult(requestId: String, status: String, message: String) {
-        postNativeMessage(JSONObject()
+    private fun sendFileSaveResult(requestId: String, status: String, message: String, stage: String = "picker") {
+        activeActivity?.postNativeMessageOnUiThread(JSONObject()
+            .put("stage", stage)
             .put("type", "shift_tracker_file:save_result")
             .put("requestId", requestId)
             .put("status", status)
