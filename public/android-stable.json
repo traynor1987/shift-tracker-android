@@ -4,7 +4,7 @@
   "versionCode": 81,
   "minimumWebVersion": "2.1.251",
   "apkFile": "Shift-Tracker-2.2.76.apk",
-  "sha256": "ce8c917d8509d27d6f118962d659c8b962a84f668e4ff5b29571afbf18e54cb2",
+  "sha256": "dd8efa37389d36fd6d72302f90ebbf0c40476bbd88c09ef5aca874cd16fc0dab",
   "releaseNotes": [
     "Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending."
   ],
@@ -12,6 +12,6 @@
     "versionName": "2.2.76",
     "versionCode": 81,
     "asset": "Shift-Tracker-Wear-2.2.76.apk",
-    "sha256": "6855c6bd33a78f88f14679a0ed4e2cba57537b21229039bcb7a83c0c3e3d51fc"
+    "sha256": "b9d0759fd763089101c4a77efa007151f4c88973f7a77af043ca07bca85cead3"
   }
 }
