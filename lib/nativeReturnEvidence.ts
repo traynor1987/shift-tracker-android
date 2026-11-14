@@ -109,7 +109,7 @@ export function acknowledgeNativeReturnEvent(eventId: string) {
   catch { return false; }
 }
 
-/** Wait for Android's durable journal and chunked dispatcher, not a guessed delay. */
+/** Acknowledge only an Android-confirmed watermark. A timeout lets the driver choose how to proceed. */
 export function requestNativeDeliveryDrain(shiftId: string, deliveryId: string): Promise<boolean> {
   if (typeof window === 'undefined' || window.location.origin !== TRUSTED_SHIFT_TRACKER_ORIGIN || !window.ShiftTrackerNative) return Promise.resolve(false);
   const requestId = `return-drain-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -126,7 +126,7 @@ export function requestNativeDeliveryDrain(shiftId: string, deliveryId: string):
       const result = payload as Record<string, unknown>;
       if (result.type === 'shift_tracker_location:drained' && result.requestId === requestId && result.shiftId === shiftId && result.deliveryId === deliveryId) finish(!result.error);
     });
-    const timeout = window.setTimeout(() => finish(false), 120_000);
+    const timeout = window.setTimeout(() => finish(false), 8_000);
     try { window.ShiftTrackerNative!.postMessage(JSON.stringify({type:'shift_tracker_location:drain',requestId,shiftId,deliveryId})); }
     catch { finish(false); }
   });

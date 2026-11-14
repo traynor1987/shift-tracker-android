@@ -6,7 +6,7 @@
  */
 import { appendDeveloperLog, getDeveloperSettings, nativeMessageType } from "./developerConsole.ts";
 
-export const WEB_APP_VERSION = "2.1.251";
+export const WEB_APP_VERSION = "2.1.252";
 export const TRUSTED_SHIFT_TRACKER_ORIGIN = "https://dominos-shift-tracker.traynor1987.chatgpt.site";
 export const NATIVE_BRIDGE_VERSION = 1;
 export const NATIVE_SAMPLE_STALE_MS = 60_000;

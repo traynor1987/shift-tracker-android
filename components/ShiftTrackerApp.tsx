@@ -1078,6 +1078,12 @@ export default function ShiftTrackerApp() {
   // Return evidence has its own priority lane, independent of route journal size.
   const nativeReturnFlushRef = useRef<Promise<unknown>>(Promise.resolve());
   const queuedNativeReturnIdsRef = useRef(new Set<string>());
+  const [returnRouteRecovery, setReturnRouteRecovery] = useState<{
+    shiftId: string;
+    deliveryId: string;
+    actionMs: number;
+    gpsOverride: boolean;
+  } | null>(null);
   const nativeReturnCompletionRef = useRef<Promise<CommitResult> | null>(null);
   const finishDeliveryAfterDrainRef = useRef<(gpsOverride: boolean, actionMs: number, deliveryId: string) => Promise<CommitResult> | void>(() => undefined);
   const finishTaskAfterDrainRef = useRef<(taskId: string, actionMs: number, deliveryId: string) => Promise<CommitResult> | void>(() => undefined);
@@ -4292,9 +4298,9 @@ export default function ShiftTrackerApp() {
       if (nativeReturnCompletionRef.current) return;
       notify("Return confirmed · saving the remaining route before starting your task");
       nativeReturnCompletionRef.current = requestNativeDeliveryDrain(active.id, running.id).then(async drained => {
-        await nativeReturnFlushRef.current;
-        await nativeSampleFlushRef.current;
-        if (!drained || nativeSamplePersistenceBlockedRef.current) {
+        // Android's acknowledgement covers the durable watermark. The live
+        // queue may also contain samples received after the completion tap.
+        if (!drained) {
           notify("Route is still waiting to save. Keep this delivery open and try Back at Store again.");
           return {status:"rejected" as const};
         }
@@ -4995,6 +5001,7 @@ export default function ShiftTrackerApp() {
     drainedAt?: number,
     drainedDeliveryId?: string,
     requestedAt?: number,
+    routeRecovery?: { shiftId: string; deliveryId: string },
   ): Promise<CommitResult> | void {
     // Native monitoring preserves the owner's manual completion tap.
     if ((autoReturnRecovery || carryoutAutoReturn) && lastCommittedDataRef.current.settings.alwaysOnShiftMonitoring !== false) return;
@@ -5009,21 +5016,7 @@ export default function ShiftTrackerApp() {
     if (requestedAt !== undefined && (!Number.isSafeInteger(requestedAt) || requestedAt > Date.now() + 5_000 ||
       requestedAt < Math.max(Date.parse(running.start), ...(running.customerEvents ?? []).filter(event => event.source === "manual_delivered").map(event => Date.parse(event.timestamp))))) return;
     if (drainedDeliveryId && running.id !== drainedDeliveryId) return;
-    if (running.nativeReturnEvidence && nativeShellBridgeAvailable() && drainedAt === undefined) {
-      if (nativeReturnCompletionRef.current) return nativeReturnCompletionRef.current;
-      const actionMs = requestedAt ?? Date.now();
-      notify("Return confirmed · saving the remaining route");
-      nativeReturnCompletionRef.current = requestNativeDeliveryDrain(active.id, running.id).then(async drained => {
-        await nativeReturnFlushRef.current;
-        await nativeSampleFlushRef.current;
-        if (!drained || nativeSamplePersistenceBlockedRef.current) {
-          notify("Route is still waiting to save. Keep this delivery open and try Back at Store again.");
-          return {status:"rejected" as const};
-        }
-        return await finishDeliveryAfterDrainRef.current(gpsOverride, actionMs, running.id) ?? {status:"rejected" as const};
-      }).finally(() => { nativeReturnCompletionRef.current = null; });
-      return nativeReturnCompletionRef.current;
-    }
+    if (routeRecovery && (routeRecovery.shiftId !== active.id || routeRecovery.deliveryId !== running.id)) return;
     const deliveredCustomers = (running.customerEvents ?? []).filter(
       (event) => event.source === "manual_delivered",
     ).length;
@@ -5042,6 +5035,21 @@ export default function ShiftTrackerApp() {
       return notify(
         "Return to the store geofence first · hold for 5 seconds to override",
       );
+    if (running.nativeReturnEvidence && nativeShellBridgeAvailable() && drainedAt === undefined) {
+      if (nativeReturnCompletionRef.current) return nativeReturnCompletionRef.current;
+      const actionMs = requestedAt ?? Date.now();
+      notify("Return confirmed · saving the remaining route");
+      nativeReturnCompletionRef.current = requestNativeDeliveryDrain(active.id, running.id).then(async drained => {
+        // Android's acknowledgement covers the durable watermark. The live
+        // queue may also contain samples received after the completion tap.
+        if (!drained) {
+          setReturnRouteRecovery({ shiftId: active.id, deliveryId: running.id, actionMs, gpsOverride });
+          return {status:"rejected" as const};
+        }
+        return await finishDeliveryAfterDrainRef.current(gpsOverride, actionMs, running.id) ?? {status:"rejected" as const};
+      }).finally(() => { nativeReturnCompletionRef.current = null; });
+      return nativeReturnCompletionRef.current;
+    }
     const actionMs = drainedAt ?? requestedAt ?? Date.now();
     const actionStamp = new Date(actionMs).toISOString();
     const automaticReturn = carryoutAutoReturn
@@ -5073,6 +5081,14 @@ export default function ShiftTrackerApp() {
         )) ||
         automaticReturnCompletionAt(activity, actionMs, automaticReturn.entryAt, automaticReturn.allowanceMs) !== stamp
       )) return false;
+      if (!deliveryCustomersComplete(activity)) return false;
+      if (routeRecovery && activity.routeEvidence?.status === "recording") {
+        activity.routeEvidence.issues.push({
+          timestamp: actionStamp,
+          type: "timeout",
+          message: "Delivery saved before Android confirmed all GPS points. Recorded mileage may be incomplete.",
+        });
+      }
       finaliseDeliveryActivity(
         activity,
         stamp,
@@ -9511,6 +9527,23 @@ export default function ShiftTrackerApp() {
               >
                 GOT IT
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {returnRouteRecovery && active?.id === returnRouteRecovery.shiftId &&
+        active.activities?.some(activity => activity.id === returnRouteRecovery.deliveryId && !activity.end) && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="return-route-title">
+            <h2 id="return-route-title">GPS route still recovering</h2>
+            <p>You can retry or finish the delivery with the GPS already recorded. Mileage may be incomplete.</p>
+            <div>
+              <button onClick={() => setReturnRouteRecovery(null)}>KEEP DELIVERY OPEN</button>
+              <button className="confirm-primary" onClick={() => {
+                const { gpsOverride, actionMs, deliveryId } = returnRouteRecovery;
+                setReturnRouteRecovery(null);
+                void finishDelivery(gpsOverride, undefined, undefined, commit, actionMs, deliveryId, undefined, returnRouteRecovery);
+              }}>FINISH WITH RECORDED GPS</button>
             </div>
           </div>
         </div>

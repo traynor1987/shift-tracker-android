@@ -23,7 +23,7 @@ function handler(name:string) {
   visit(ast); assert.ok(expression, name);
   return ts.transpileModule(`globalThis.run = (${expression});`,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText;
 }
-function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolean>; nativeBridge?: boolean } = {}) {
+function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolean>; nativeBridge?: boolean; sampleFlush?: Promise<void> } = {}) {
   let clock=Date.parse('2026-09-24T10:10:00.500Z');
   let data=domain.emptyData();
   data.settings.alwaysOnShiftMonitoring=false; // Explicit legacy auto-return fixtures.
@@ -33,6 +33,7 @@ function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolea
   shift.taskSnapshot=[task];
   data.settings.storePresenceStartProofEnabled=false;data.settings.storePresenceProofEnabled=false; data.settings.locationAssistEnabled=false;data.settings.recordDeliveryRoutes=false;
   const notices:string[]=[];
+  let routeRecovery: { shiftId: string; deliveryId: string; actionMs: number; gpsOverride: boolean } | null = null;
   const effects:string[]=[];
   let beforeCommit: (()=>void)|undefined;
   let deferEffects=false;
@@ -42,7 +43,8 @@ function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolea
   class Clock extends Date {constructor(value?:string|number){super(value ?? clock);} static now(){return clock;}}
   const sandbox:Record<string, unknown>={...domain,...timing,Date:Clock,structuredClone,console,
     lastCommittedDataRef:{get current(){return data;}},
-    nativeReturnCompletionRef:{current:null},nativeReturnFlushRef:{current:Promise.resolve()},nativeSampleFlushRef:{current:Promise.resolve()},nativeSamplePersistenceBlockedRef:{current:false},
+    nativeReturnCompletionRef:{current:null},nativeReturnFlushRef:{current:Promise.resolve()},nativeSampleFlushRef:{current:options.sampleFlush ?? Promise.resolve()},nativeSamplePersistenceBlockedRef:{current:false},
+    setReturnRouteRecovery:(value: typeof routeRecovery)=>{routeRecovery=value;},
     nativeShellBridgeAvailable:()=>options.nativeBridge !== false,
     requestNativeDeliveryDrain:options.drain ?? (()=>Promise.resolve(true)),
     finishDeliveryAfterDrainRef:{current:(override:boolean,at:number,id:string)=>{vm.runInContext(handler('finishDelivery'),context);return (sandbox.run as Function)(override,undefined,undefined,sandbox.commit,at,id);}},
@@ -78,7 +80,7 @@ function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolea
     vm.runInContext(script, context);
     return {persist:sandbox.locationPersist, flush:sandbox.flushLocationBatch as (accepted:boolean)=>Promise<{status:string}>, attempt:sandbox.attemptCarryoutReturn as (stamp:string)=>void, get autoReturning(){return (sandbox.carryoutDepartureStateRef as {current:{autoReturning:boolean}}).current.autoReturning;}};
   };
-  return {stageLocationBatch,get data(){return data;},notices,effects,interceptNextCommit:(fn:()=>void)=>{beforeCommit=fn;},deferEffects:()=>{deferEffects=true;},flushEffects:()=>{pendingEffects.splice(0).forEach(fn=>fn(data));},flushCommits:()=>{pendingCommits.splice(0).forEach(apply=>apply());},advance:(ms:number)=>{clock+=ms;},call:(name:string,...args:unknown[])=>{vm.runInContext(handler(name),context);return (sandbox.run as (...values:unknown[])=>unknown)(...args);},get task(){return data.shifts[0].taskSnapshot![0];}};
+  return {stageLocationBatch,get routeRecovery(){return routeRecovery;},get data(){return data;},notices,effects,interceptNextCommit:(fn:()=>void)=>{beforeCommit=fn;},deferEffects:()=>{deferEffects=true;},flushEffects:()=>{pendingEffects.splice(0).forEach(fn=>fn(data));},flushCommits:()=>{pendingCommits.splice(0).forEach(apply=>apply());},advance:(ms:number)=>{clock+=ms;},call:(name:string,...args:unknown[])=>{vm.runInContext(handler(name),context);return (sandbox.run as (...values:unknown[])=>unknown)(...args);},get task(){return data.shifts[0].taskSnapshot![0];}};
 }
 
 for(const kind of ['single','double'] as const) test(`${kind}: actual start/task pause/Back at Store/resume handlers save and reload`,async()=>{
@@ -374,7 +376,7 @@ for (const action of ['finishDelivery','finishDeliveryAndStartTask']) test(`${ac
 test('failed native drain leaves the delivery and mileage open',async()=>{
   const h=harness({drain:async()=>false});const run=returnedRun(h);
   run.nativeReturnEvidence={eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
-  await h.call('finishDelivery');assert.equal(run.end,null);assert.ok(h.notices.some(message=>message.includes('still waiting to save')));
+  await h.call('finishDelivery');assert.equal(run.end,null);assert.equal(h.routeRecovery?.deliveryId, run.id);
 });
 
 
@@ -393,4 +395,40 @@ test('queued native manual return retains trusted tap timestamp and rejects pre-
  }
  await h.call('finishDelivery',false,undefined,undefined,undefined,undefined,undefined,Date.parse('2026-09-24T10:55:00Z'));
  assert.equal(h.data.shifts[0].activities!.find(item=>item.id===run.id)!.end,'2026-09-24T10:55:00.000Z');
+});
+
+test('durable watermark acknowledgement does not wait on unrelated live GPS saves', async () => {
+  let release!: () => void;
+  const h = harness({sampleFlush: new Promise<void>(resolve => { release = resolve; })});
+  const run = returnedRun(h);
+  run.nativeReturnEvidence = {eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
+  const pending = h.call('finishDelivery') as Promise<unknown>;
+  await new Promise<void>(resolve => setImmediate(resolve));
+  try {
+    assert.equal(h.data.shifts[0].activities!.find(item => item.id === run.id)!.end, '2026-09-24T10:56:00.500Z');
+  } finally {
+    release();
+    await pending;
+  }
+});
+
+test('unavailable native drain offers a scoped confirmation and closes with a partial route only if confirmed', async () => {
+  const h = harness({drain: async () => false});
+  const run = returnedRun(h);
+  run.nativeReturnEvidence = {eventId:'return',generation:1,storeId:'ormskirk',storeRevision:'ormskirk-protected-v1',timestampEpochMs:Date.parse(run.storeEntryAt!),observedAtEpochMs:Date.parse(run.storeEntryAt!),notificationAt:0};
+  run.routeEvidence = {status:'recording',startedAt:run.start,completedAt:null,recordedPointCount:2,expiresAt:null,retention:'forever',detail:'standard',distanceMetres:0,points:[
+    {latitude:53.568,longitude:-2.889,accuracy:5,timestamp:'2026-09-24T10:21:00.000Z'},
+    {latitude:53.569,longitude:-2.889,accuracy:5,timestamp:'2026-09-24T10:22:00.000Z'}
+  ],gaps:[],issues:[]} as domain.DeliveryRouteEvidence;
+  await h.call('finishDelivery');
+  assert.equal(run.end, null);
+  const recovery = h.routeRecovery;
+  assert.ok(recovery);
+  h.advance(15000);
+  await h.call('finishDelivery', recovery.gpsOverride, undefined, undefined, undefined, recovery.actionMs, recovery.deliveryId, undefined, recovery);
+  const saved = h.data.shifts[0].activities!.find(item => item.id === run.id)!;
+  assert.equal(saved.end, '2026-09-24T10:56:00.500Z');
+  assert.equal(saved.routeEvidence?.status, 'partial');
+  assert.equal(saved.routeEvidence?.points.length, 2);
+  assert.equal(saved.routeEvidence?.issues[0]?.type, 'timeout');
 });
