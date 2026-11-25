@@ -95,7 +95,7 @@ test("native sample replay after a successful commit is idempotent", async () =>
   assert.deepEqual(acknowledged, ["sample-1", "sample-1"]);
 });
 
-test("one native sample uses one canonical commit and failed optimistic state is re-saved", () => {
+test("native replay stages ordered mutations and failed optimistic state is re-saved", () => {
   const component = readFileSync(new URL("../components/ShiftTrackerApp.tsx", import.meta.url), "utf8");
   const handler = component.slice(
     component.indexOf("const applyLocationReading"),
@@ -103,7 +103,7 @@ test("one native sample uses one canonical commit and failed optimistic state is
   );
 
   assert.match(handler, /const pendingMutations:/);
-  assert.match(handler, /const result = await commit\(\(draft\) =>/);
+  assert.match(handler, /const result = await save\(\(draft\) =>/);
   assert.match(handler, /nativeUnpersistedSampleIdsRef\.current\.has\(nativeSampleId!\)/);
   assert.match(handler, /pendingMutations\.push\(\(\) => undefined\)/);
   assert.doesNotMatch(handler, /const operation = commit\(updater\)/);

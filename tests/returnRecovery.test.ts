@@ -1,3 +1,4 @@
+import { createNativeReplayBatch } from '../lib/nativeReplay.ts';
 import { returnEligibility } from "../lib/returnEligibility.ts";
 import { traceReturn } from "../lib/returnDiagnostics.ts";
 import assert from 'node:assert/strict';
@@ -117,7 +118,7 @@ test('confirmed presence survives canonical save and reload and malformed backup
   assert.equal(validateAppDataStructure(invalid).ok,false);
 });
 
-test('actual GPS ingestion recovers a closed-page return from the retained native fix', async () => {
+for (const batched of [false, true]) test(`actual GPS ingestion recovers a closed-page return from the retained native fix (batch=${batched})`, async () => {
   const source=readFileSync(new URL('../components/ShiftTrackerApp.tsx',import.meta.url),'utf8');
   const ast=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
   let body=''; const visit=(node:ts.Node)=>{if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='applyLocationReading')body=node.initializer!.getText(ast);ts.forEachChild(node,visit);};visit(ast);assert.ok(body);
@@ -141,7 +142,9 @@ test('actual GPS ingestion recovers a closed-page return from the retained nativ
     playGeofenceTone:()=>undefined,showNativeGeofenceAlert:()=>undefined,navigator:{},makeId:()=> 'return-marker',
     commit:async(update:(draft:domain.AppData)=>void)=>{update(data);return {status:'persisted'};}});
   vm.runInContext(ts.transpileModule(`globalThis.run=(${body});`,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText,context);
-  const result=await context.run({coords:{latitude:realFence.latitude,longitude:realFence.longitude,accuracy:5},timestamp:t+125_000},activity.id,'retained-fix');
+  const batch = batched ? createNativeReplayBatch(data) : undefined;
+  const result=await context.run({coords:{latitude:realFence.latitude,longitude:realFence.longitude,accuracy:5},timestamp:t+125_000},activity.id,'retained-fix',batch);
+  if (batch) assert.equal((await batch.persist(context.commit)).status, 'persisted');
   assert.equal(result.status,'persisted');
   assert.equal(activity.storeEntryUnobserved,true);
   assert.equal(activity.storeEntryAt,undefined);

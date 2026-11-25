@@ -63,13 +63,14 @@ test("production save path queues hosted backup only in the successful local-sav
   assert.ok(savePath.includes('queueHostedCheckpoint(draft, checkpointReason!)'));
   assert.ok(savePath.indexOf(".then(() => {") < savePath.indexOf("queueHostedCheckpoint(draft"));
   const ingestion = source.slice(source.indexOf("const applyLocationReading"), source.indexOf("const recordRouteIssue"));
-  assert.match(ingestion, /\}, \(latest\) => \{[\s\S]*?\}, "location"\);/);
+  assert.match(ingestion, /commit\(update, applied, "location"\)/);
+  assert.match(ingestion, /batch\.persist/);
 });
 
 test("native replay reads the current delivery and coalesces duplicate queued samples", async () => {
   const source = await readFile(new URL("../components/ShiftTrackerApp.tsx", import.meta.url), "utf8");
   const replay = source.slice(source.indexOf("const sample = readNativeLocationSample(event)"), source.indexOf("useEffect(() => {", source.indexOf("const sample = readNativeLocationSample(event)")));
   assert.ok(replay.includes("queuedNativeSampleIdsRef.current.has(sample.sampleId)"));
-  assert.ok(replay.includes("applyNativeLocationReadingRef.current("));
-  assert.match(replay, /\.finally\(\(\) => \{\s*queuedNativeSampleIdsRef\.current\.delete\(sample\.sampleId\)/);
+  assert.ok(source.includes("applyNativeLocationReadingRef.current("));
+  assert.match(replay, /samples\.forEach\(sample => queuedNativeSampleIdsRef\.current\.delete\(sample\.sampleId\)\)/);
 });

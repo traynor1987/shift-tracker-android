@@ -16,6 +16,7 @@ import { SettingsGroupMenu, LegacyViewSwitch } from "./SettingsPresentation";
 import Phase3TasksOverview from "./Phase3TasksOverview";
 import { useWallClock } from "./useWallClock";
 import { startPerformanceMonitor } from "../lib/performanceMonitor";
+import { createNativeReplayBatch } from "../lib/nativeReplay";
 import { acceptedNativeFix } from "../lib/nativeLocationSync";
 import { createHistoricalRepair, type HistoricalRepairResult } from "../lib/historicalRepair";
 import { attachTaskPhoto, deleteTaskPhoto, recoverPhotoOperations } from "../lib/photoOperations";
@@ -317,6 +318,7 @@ import {
   printWeekReport,
 } from "@/lib/lazyPdfReports";
 import {
+  type NativeLocationSample,
   acknowledgeNativeAction,
   acknowledgeNativeDispatchNotification,
   acknowledgeNativeLocationSample,
@@ -1074,6 +1076,9 @@ export default function ShiftTrackerApp() {
     point: DeliveryRoutePoint | null;
   }>({ activityId: "", point: null });
   const nativeShellConnectedRef = useRef(false);
+  const nativeReplayPendingRef = useRef<NativeLocationSample[]>([]);
+  const nativeReplayDrainingRef = useRef(false);
+  const processNativeReplayRef = useRef<(samples: NativeLocationSample[]) => Promise<void>>(async () => {});
   const nativeSampleFlushRef = useRef<Promise<void>>(Promise.resolve());
   // Return evidence has its own priority lane, independent of route journal size.
   const nativeReturnFlushRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -1092,7 +1097,7 @@ export default function ShiftTrackerApp() {
   const latestBrowserProviderFixRef = useRef<{ shiftId: string; deliveryId: string | null; timestamp: number } | null>(null);
   const lastLocationCheckpointAtRef = useRef(0);
   const applyNativeLocationReadingRef = useRef<
-    (position: GeolocationPosition, deliveryId: string, sampleId: string) => Promise<NativeSampleIngestionResult & { accepted: boolean }>
+    (position: GeolocationPosition, deliveryId: string, sampleId: string, batch?: ReturnType<typeof createNativeReplayBatch>) => Promise<NativeSampleIngestionResult & { accepted: boolean }>
   >(() => Promise.resolve({ status: "rejected", accepted: false }));
   const nativeSamplePersistenceBlockedRef = useRef(false);
   const nativeUnpersistedSampleIdsRef = useRef(new Set<string>());
@@ -2971,6 +2976,7 @@ export default function ShiftTrackerApp() {
     position: GeolocationPosition,
     nativeDeliveryId?: string,
     nativeSampleId?: string,
+    batch?: ReturnType<typeof createNativeReplayBatch>,
   ): Promise<NativeSampleIngestionResult & { accepted: boolean }> => {
     traceReturn(nativeDeliveryId, "sample_received");
     const pendingMutations: Array<(draft: AppData) => void | boolean> = [];
@@ -2998,12 +3004,13 @@ export default function ShiftTrackerApp() {
         pendingMutations.push(() => undefined);
       if (pendingMutations.length === 0)
         return { accepted, status: "rejected" };
-      const result = await commit((draft) => {
+      const save: AppDataCommit = batch ? batch.commit : (update, applied) => commit(update, applied, "location");
+      const result = await save((draft) => {
         for (const mutation of pendingMutations)
           if (mutation(draft) === false) return false;
       }, (latest) => {
         for (const effect of pendingAppliedEffects) effect(latest);
-      }, "location");
+      });
       if (result.status === "rejected" && pendingCarryoutReturnId &&
           carryoutDepartureStateRef.current.deliveryId === pendingCarryoutReturnId)
         carryoutDepartureStateRef.current.autoReturning = false;
@@ -3016,7 +3023,7 @@ export default function ShiftTrackerApp() {
         status: result.status === "persisted" ? "persisted" : "rejected",
       };
     };
-    const latestData = lastCommittedDataRef.current;
+    const latestData = batch?.data ?? lastCommittedDataRef.current;
     const currentActive = latestData.shifts.find(
       (shift) => shift.status !== "completed",
     );
@@ -3532,7 +3539,9 @@ export default function ShiftTrackerApp() {
       return finish(true);
     }
     const stamp = result.transition.timestamp;
+    let notificationTransition: ReturnType<typeof applyRealGeofenceTransition> | null = null;
     persist((draft) => {
+      notificationTransition = null;
       const shift = draft.shifts.find((item) => item.id === currentActive.id);
       const activity = shift?.activities?.find(
         (item) => item.id === deliveryActivity.id,
@@ -3550,15 +3559,13 @@ export default function ShiftTrackerApp() {
         recordRealHustleExitMetrics(activity);
       }
       const applied = applyRealGeofenceTransition(activity, result.transition!);
+      notificationTransition = applied;
       if (applied === "entry_recorded") traceReturn(activity.id, "exact_entry", activity.storeEntryAt ?? undefined);
       if (applied === "exit_recorded" || applied === "exit_unobserved") {
         if (applied === "exit_recorded") {
           activity.locationAccuracy = accuracy;
           recordRealHustleExitMetrics(activity);
         }
-        playGeofenceTone(false);
-        if (applied === "exit_recorded")
-          showNativeGeofenceAlert("left", Date.parse(stamp));
         shift.activities!.push({
           id: makeId(),
           shiftId: shift.id,
@@ -3575,7 +3582,6 @@ export default function ShiftTrackerApp() {
       }
       if (applied === "entry_recorded" || applied === "entry_unobserved") {
         if (applied === "entry_recorded") activity.locationAccuracy = accuracy;
-        playGeofenceTone(true);
         // Return notification follows canonical confirmation in the shared state effect.
         shift.activities!.push({
           id: makeId(),
@@ -3590,10 +3596,17 @@ export default function ShiftTrackerApp() {
               : "Entered store · exact time unavailable",
           tracked: false,
         });
-        if (applied === "entry_recorded" && navigator.vibrate)
-          navigator.vibrate([80, 60, 80]);
       }
       shift.updatedAt = stamp;
+    }, () => {
+      if (notificationTransition === "exit_recorded" || notificationTransition === "exit_unobserved") {
+        playGeofenceTone(false);
+        if (notificationTransition === "exit_recorded") showNativeGeofenceAlert("left", Date.parse(stamp));
+      }
+      if (notificationTransition === "entry_recorded" || notificationTransition === "entry_unobserved") {
+        playGeofenceTone(true);
+        if (notificationTransition === "entry_recorded" && navigator.vibrate) navigator.vibrate([80, 60, 80]);
+      }
     });
     return finish(true);
   };
@@ -3601,6 +3614,62 @@ export default function ShiftTrackerApp() {
   // Replay messages may all arrive in one turn after Android resumes. Use
   // the current render's delivery state when each queued sample is applied.
   applyNativeLocationReadingRef.current = applyLocationReading;
+
+  processNativeReplayRef.current = async (samples) => {
+    const ingestionStartedAt = performance.now();
+    try {
+      await nativeReturnFlushRef.current;
+      if (nativeSamplePersistenceBlockedRef.current) return;
+      const batch = createNativeReplayBatch(lastCommittedDataRef.current);
+      await flushNativeSamples(
+        samples,
+        async (pendingSample) => {
+          const ingestion = await applyNativeLocationReadingRef.current(
+            {
+              coords: {
+                latitude: pendingSample.latitude,
+                longitude: pendingSample.longitude,
+                accuracy: pendingSample.accuracy,
+                altitude: null,
+                altitudeAccuracy: null,
+                heading: pendingSample.heading ?? null,
+                speed: pendingSample.speed ?? null,
+              },
+              timestamp: pendingSample.timestampEpochMs,
+            } as GeolocationPosition,
+            pendingSample.deliveryId,
+            pendingSample.sampleId,
+            batch,
+          );
+          const liveShift = lastCommittedDataRef.current.shifts.find(shift => shift.status !== "completed");
+          const liveDeliveryId = liveShift?.activities?.findLast(activity => !activity.end && (activity.type === "single_delivery" || activity.type === "double_delivery"))?.id;
+          if (ingestion.accepted && liveDeliveryId === pendingSample.deliveryId) {
+            nativeCanonicalSampleDeliveryRef.current =
+              pendingSample.deliveryId;
+            nativeTrackingRequestedRef.current = true;
+            nativeTrackingActiveRef.current = true;
+            clearNativeStartWatchdog();
+          }
+          return { status: ingestion.status };
+        },
+        () => {},
+      );
+
+      const result = await batch.persist((update, applied) => commit(update, applied, "location"));
+      if (result.status === "failed") throw result.error;
+      if (result.status === "rejected") throw new Error("GPS replay changed during saving; retained samples will retry");
+      samples.forEach(sample => {
+        nativeUnpersistedSampleIdsRef.current.delete(sample.sampleId);
+        acknowledgeNativeLocationSample(sample.sampleId);
+      });
+      recordRuntimeMeasurement("native_ingestion", performance.now() - ingestionStartedAt);
+    } catch (error) {
+      samples.forEach(sample => nativeUnpersistedSampleIdsRef.current.add(sample.sampleId));
+      nativeSamplePersistenceBlockedRef.current = true;
+      appendDeveloperLog("INGESTION", "SAMPLE_PERSISTENCE_DEFERRED",
+        error instanceof Error ? error.message : "GPS batch remains in Android recovery storage", "error");
+    }
+  };
 
   const recordRouteIssue = (error: GeolocationPositionError) => {
     const currentActive = data.shifts.find(
@@ -7614,6 +7683,13 @@ export default function ShiftTrackerApp() {
           armNativeStartWatchdog(currentDeliveryId);
         }
       }
+      if (info.trackingActive && info.trackedDeliveryId === currentDeliveryId &&
+          nativeSampleIsFresh(info.diagnostics?.lastSampleReceivedAt, Date.now(), 60_000)) {
+        latestNativeProviderFixRef.current = acceptedNativeFix(latestNativeProviderFixRef.current,
+          {deliveryId: currentDeliveryId!, timestamp: info.diagnostics!.lastSampleReceivedAt!}, currentDeliveryId, true);
+        setNativeGpsStalled(false);
+        setLocationState(current => ({...current, status: "ready"}));
+      }
       setNativeShellInfo(info);
     }
     const state = readNativeTrackingState(event);
@@ -7636,6 +7712,12 @@ export default function ShiftTrackerApp() {
               ? "warning"
               : "info",
       );
+      if (state.deliveryId === currentDeliveryId && state.status === "sample_received" &&
+          nativeSampleIsFresh(state.diagnostics?.lastSampleReceivedAt, Date.now(), 60_000)) {
+        latestNativeProviderFixRef.current = acceptedNativeFix(latestNativeProviderFixRef.current,
+          {deliveryId: currentDeliveryId!, timestamp: state.diagnostics!.lastSampleReceivedAt!}, currentDeliveryId, true);
+        setNativeGpsStalled(false);
+      }
       setNativeShellInfo((current) =>
         current
           ? {
@@ -7808,81 +7890,38 @@ export default function ShiftTrackerApp() {
           `Provider timestamp=${new Date(sample.timestampEpochMs).toISOString()} · accuracy=${Math.round(sample.accuracy)}m · coordinates and identifiers omitted`,
           "success",
         );
-      nativeSampleFlushRef.current = nativeSampleFlushRef.current
-        .then(async () => {
-          // Even samples queued before shell-ready yield to the latest return
-          // commit. Historical route replay cannot gate return eligibility.
-          await nativeReturnFlushRef.current;
-          if (nativeSamplePersistenceBlockedRef.current) return;
-          recordRuntimeMeasurement("native_queue_wait", performance.now() - receivedAt);
-          const ingestionStartedAt = performance.now();
-          await flushNativeSamples(
-            [sample],
-            async (pendingSample) => {
-              const ingestion = await applyNativeLocationReadingRef.current(
-                {
-                  coords: {
-                    latitude: pendingSample.latitude,
-                    longitude: pendingSample.longitude,
-                    accuracy: pendingSample.accuracy,
-                    altitude: null,
-                    altitudeAccuracy: null,
-                    heading: pendingSample.heading ?? null,
-                    speed: pendingSample.speed ?? null,
-                  },
-                  timestamp: pendingSample.timestampEpochMs,
-                } as GeolocationPosition,
-                pendingSample.deliveryId,
-                pendingSample.sampleId,
-              );
-              const liveShift = lastCommittedDataRef.current.shifts.find(shift => shift.status !== "completed");
-              const liveDeliveryId = liveShift?.activities?.findLast(activity => !activity.end && (activity.type === "single_delivery" || activity.type === "double_delivery"))?.id;
-              latestNativeProviderFixRef.current = acceptedNativeFix(latestNativeProviderFixRef.current, { deliveryId: pendingSample.deliveryId, timestamp: pendingSample.timestampEpochMs }, liveDeliveryId, ingestion.accepted);
-              if (ingestion.accepted && liveDeliveryId === pendingSample.deliveryId) {
-                setNativeGpsStalled(false);
-                nativeCanonicalSampleDeliveryRef.current =
-                  pendingSample.deliveryId;
-                nativeTrackingRequestedRef.current = true;
-                nativeTrackingActiveRef.current = true;
-                clearNativeStartWatchdog();
-                setNativeShellInfo((current) =>
-                  current
-                    ? {
-                        ...current,
-                        diagnostics: {
-                          ...current.diagnostics,
-                          lastSampleReceivedAt: pendingSample.timestampEpochMs,
-                        },
-                      }
-                    : current,
-                );
-              }
-              return { status: ingestion.status };
-            },
-            acknowledgeNativeLocationSample,
-          );
-          recordRuntimeMeasurement("native_ingestion", performance.now() - ingestionStartedAt);
-        })
-        .catch((error) => {
-          nativeUnpersistedSampleIdsRef.current.add(sample.sampleId);
-          nativeSamplePersistenceBlockedRef.current = true;
-          appendDeveloperLog(
-            "INGESTION",
-            "SAMPLE_PERSISTENCE_DEFERRED",
-            error instanceof Error
-              ? error.message
-              : "Native sample remains queued because canonical persistence failed",
-            "error",
-          );
-        })
-        .finally(() => {
-          queuedNativeSampleIdsRef.current.delete(sample.sampleId);
+      // Android validated and journaled this fix before sending it. Provider
+      // liveness must not wait behind historical route persistence.
+      const liveDelivery = activeDeliveryForRecovery;
+      const liveFix = Boolean(liveDelivery && sample.deliveryId === liveDelivery.id &&
+        sample.timestampEpochMs >= Date.parse(liveDelivery.start) &&
+        nativeSampleIsFresh(sample.timestampEpochMs, Date.now(), 60_000));
+      latestNativeProviderFixRef.current = acceptedNativeFix(latestNativeProviderFixRef.current,
+        {deliveryId: sample.deliveryId, timestamp: sample.timestampEpochMs}, liveDelivery?.id, liveFix);
+      if (liveFix) {
+        setNativeGpsStalled(false);
+        setLocationState(current => ({...current, status: "ready"}));
+      }
+      nativeReplayPendingRef.current.push(sample);
+      if (nativeReplayDrainingRef.current) return;
+      nativeReplayDrainingRef.current = true;
+      nativeSampleFlushRef.current = nativeSampleFlushRef.current.then(async () => {
+        // Android yields between bridge messages. Collect a bounded group so
+        // resumed routes require one durable save per group, not per point.
+        await new Promise(resolve => window.setTimeout(resolve, 100));
+        while (nativeReplayPendingRef.current.length) {
+          const samples = nativeReplayPendingRef.current.splice(0, 32);
+          await processNativeReplayRef.current(samples);
+          samples.forEach(sample => queuedNativeSampleIdsRef.current.delete(sample.sampleId));
           recordRuntimeMeasurement("native_queue_depth", queuedNativeSampleIdsRef.current.size);
-          if (!queuedNativeSampleIdsRef.current.size && nativeReplayStartedAtRef.current != null) {
-            recordRuntimeMeasurement("replay_duration", performance.now() - nativeReplayStartedAtRef.current);
-            nativeReplayStartedAtRef.current = null;
-          }
-        });
+        }
+      }).finally(() => {
+        nativeReplayDrainingRef.current = false;
+        if (nativeReplayStartedAtRef.current != null) {
+          recordRuntimeMeasurement("replay_duration", performance.now() - nativeReplayStartedAtRef.current);
+          nativeReplayStartedAtRef.current = null;
+        }
+      });
     }
   };
   useEffect(() => {
@@ -8812,6 +8851,7 @@ export default function ShiftTrackerApp() {
               ...locationTrackingDemand(active, data.settings),
               status: locationState.status,
               recovering: nativeGpsStalled,
+              pendingPoints: queuedNativeSampleIdsRef.current.size,
               nativePermission: nativeShellInfo?.diagnostics?.foregroundLocation,
               now: now.getTime(),
               lastFixAt: newestTrackingFix([

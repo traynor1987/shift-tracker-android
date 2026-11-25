@@ -74,3 +74,11 @@ test("quick diagnostics export versions and numeric health while excluding arbit
   assert.equal(result.native.serviceRunning, true);
   assert.doesNotMatch(output, /SECRET|latitude|customer address/);
 });
+
+test('fresh native collection reports route syncing without hiding real provider staleness', () => {
+  const now = Date.parse('2026-11-25T11:00:00Z');
+  const current = {active:true,enabled:true,status:'ready',lastFixAt:now - 1000,now,pendingPoints:320};
+  assert.equal(trackingHealth(current).label,'GPS receiving · syncing 320 points');
+  assert.equal(trackingHealth({...current,lastFixAt:now - 120_000}).label,'GPS delayed');
+  assert.equal(trackingHealth({...current,recovering:true}).label,'GPS recovering');
+});

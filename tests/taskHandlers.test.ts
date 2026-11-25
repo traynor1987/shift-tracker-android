@@ -54,7 +54,7 @@ function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolea
     deliveryTapLockRef:{current:0},nativeCanonicalSampleDeliveryRef:{current:null},transferredReturnGuardRef:{current:null},realGeofenceOwnerRef:{current:null},dominosGeofenceStateRef:{current:null},lastLocationSampleAtRef:{current:0},nativeTrackingRequestedRef:{current:false},nativeTrackingActiveRef:{current:false},
     setRealGeofenceEvaluatorState:()=>effects.push("geofence"),setLocationState:noop,notify:(s:string)=>{notices.push(s);},startNativeDeliveryTracking:()=>{effects.push("native-start");return false;},stopLocationWatch:noop,armNativeStartWatchdog:noop,
     clearGoogleAddressLookupCache:noop,clearNovaVisionCache:noop,resetEndedDeliveryCompanionPresentation:()=>effects.push("native-stop"),setCustomerWaitPrompt:noop,cleanupExpiredPhotos:()=>Promise.resolve(),refreshPhotoStorage:noop,
-    nativeDeliveryId:undefined,nativeSampleId:undefined,nativeUnpersistedSampleIdsRef:{current:new Set<string>()},carryoutDepartureStateRef:{current:{deliveryId:'',autoReturning:false}},
+    batch:undefined,nativeDeliveryId:undefined,nativeSampleId:undefined,nativeUnpersistedSampleIdsRef:{current:new Set<string>()},carryoutDepartureStateRef:{current:{deliveryId:'',autoReturning:false}},
     window:{dispatchEvent:noop},Event:class{},
   };
   Object.defineProperties(sandbox,{data:{get:()=>data},active:{get:()=>data.shifts[0]},taskEditingShift:{get:()=>data.shifts[0]}});
@@ -73,7 +73,7 @@ function harness(options: { deferCommits?: boolean; drain?: () => Promise<boolea
   const context=vm.createContext(sandbox);
   for(const name of ["storePresenceStartProofRadius","storePresenceStartProofStatus","storePresenceProofEnabled","storePresenceProofStatus"]) {vm.runInContext(handler(name),context);sandbox[name]=sandbox.run;}
   const stageLocationBatch = () => {
-    const batch = source.slice(source.indexOf('    const pendingMutations:', source.indexOf('const applyLocationReading')), source.indexOf('    const latestData = lastCommittedDataRef.current;', source.indexOf('const applyLocationReading')));
+    const batch = source.slice(source.indexOf('    const pendingMutations:', source.indexOf('const applyLocationReading')), source.indexOf('    const latestData = batch?.data ?? lastCommittedDataRef.current;', source.indexOf('const applyLocationReading')));
     const attempt = source.slice(source.indexOf('          carryoutState.autoReturning = true;', source.indexOf('const applyLocationReading')), source.indexOf('        }\n        setCarryoutZoneStatus', source.indexOf('          carryoutState.autoReturning = true;', source.indexOf('const applyLocationReading'))));
     vm.runInContext(handler('finishDelivery'), context); sandbox.finishDelivery = sandbox.run;
     const script = ts.transpileModule(`{ ${batch} globalThis.locationPersist = persist; globalThis.flushLocationBatch = finish; globalThis.attemptCarryoutReturn = (sampleTimestamp) => { const deliveryActivity = data.shifts[0].activities.at(-1); const carryoutState = carryoutDepartureStateRef.current; carryoutState.deliveryId = deliveryActivity.id; ${attempt} }; }`, {compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText;

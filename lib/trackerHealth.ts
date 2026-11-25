@@ -6,7 +6,7 @@ import { localSaveSnapshot } from "./localSaveStatus.ts";
 import { runtimeDiagnosticsSnapshot, PERFORMANCE_METRICS } from "./runtimeDiagnostics.ts";
 
 export type TrackingHealth = { label: string; tone: "quiet" | "good" | "warning"; ageSeconds: number | null };
-export type TrackingHealthInput = { active: boolean; enabled: boolean; status: string; lastFixAt?: number | null; now: number; recovering?: boolean; nativePermission?: NativeDiagnostics["foregroundLocation"] };
+export type TrackingHealthInput = { active: boolean; enabled: boolean; status: string; lastFixAt?: number | null; now: number; recovering?: boolean; pendingPoints?: number; nativePermission?: NativeDiagnostics["foregroundLocation"] };
 export function newestTrackingFix(timestamps: Array<number | null | undefined>, now: number) {
   const valid = timestamps.filter((stamp): stamp is number => stamp != null && Number.isFinite(stamp) && stamp <= now + 10_000);
   return valid.length ? Math.max(...valid) : null;
@@ -28,7 +28,9 @@ export function trackingHealth(value: TrackingHealthInput): TrackingHealth {
   const stamp = value.lastFixAt;
   if (stamp == null || !Number.isFinite(stamp) || stamp > value.now + 10_000) return result("Waiting for GPS", "warning");
   const age = Math.max(0, Math.floor((value.now - stamp) / 1000));
-  return age > 60 ? result("GPS delayed", "warning", age) : result("GPS receiving", "good", age);
+  if (age > 60) return result("GPS delayed", "warning", age);
+  const pending = Math.max(0, Math.floor(value.pendingPoints ?? 0));
+  return result(pending > 1 ? `GPS receiving · syncing ${pending} points` : "GPS receiving", "good", age);
 }
 
 export type FinishCheck = { code: "delivery" | "mileage" | "break" | "tasks"; message: string };

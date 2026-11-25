@@ -1,5 +1,5 @@
-const WEB_VERSION = "2.1.252";
-const CACHE_SEQUENCE = 170;
+const WEB_VERSION = "2.1.253";
+const CACHE_SEQUENCE = 171;
 const CACHE_PREFIX = "shift-tracker-v";
 const CACHE = `${CACHE_PREFIX}${CACHE_SEQUENCE}`;
 const CORE = ["/", "/manifest.webmanifest", "/pwa-register.js", "/icons/shift-clock-192.png", "/icons/shift-clock-512.png"];
