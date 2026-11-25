@@ -274,6 +274,7 @@ class DeliveryLocationService : Service() {
     private var lastSampleReceiptAt: Long? = null
     private var lastRealDistanceMetres: Float? = null
     private val watchdogHandler = Handler(Looper.getMainLooper())
+    private var lastHealthEmissionElapsedMs = 0L
     private var lastWatchdogRecoveryAt: Long? = null
     private var watchdogRecoveryCount = 0
     private val watchdogCheck = object : Runnable {
@@ -682,7 +683,15 @@ class DeliveryLocationService : Service() {
                 // may be yielding for seconds and must not cause false stalls.
                 if (sessionGate.isCurrent(journalToken) && running &&
                     result !is NativeSampleStore.AppendResult.Failed) {
-                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs)
+                    acceptedFixProgress.accepted(sample.sampleId, receivedElapsedMs, sample.timestampEpochMs)
+                    lastSampleReceivedAt = acceptedFixProgress.lastProviderTimestampEpochMs
+                    diagnostic = "SAMPLE_RECEIVED"
+                    // Provider health bypasses route replay. The journal is
+                    // already durable, even when WebView consumption sleeps.
+                    if (receivedElapsedMs - lastHealthEmissionElapsedMs >= 10_000L) {
+                        lastHealthEmissionElapsedMs = receivedElapsedMs
+                        emitState("sample_received", id, "Native GPS journal is receiving; route replay is independent")
+                    }
                 }
                 dispatchQueue.offer(listOf({
                     if (sessionGate.isCurrent(journalToken) && running) completeJournaledSample(sample, id, result, receivedElapsedMs)
@@ -739,7 +748,7 @@ class DeliveryLocationService : Service() {
         sampleReceivedForSession = true
         // Keep this diagnostic current for every validated provider sample,
         // not only the first fix in the delivery session.
-        lastSampleReceivedAt = acceptedSample.timestampEpochMs
+        lastSampleReceivedAt = maxOf(lastSampleReceivedAt ?: 0L, acceptedSample.timestampEpochMs)
         diagnostic = "SAMPLE_RECEIVED"
         if (firstSample) {
             dispatchSample(acceptedSample)

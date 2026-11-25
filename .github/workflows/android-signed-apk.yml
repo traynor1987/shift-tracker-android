@@ -11,7 +11,7 @@ on:
       minimum_web_version:
         description: "Minimum compatible Shift Tracker Web App version"
         required: true
-        default: "2.1.251"
+        default: "2.1.253"
         type: string
       release_notes:
         description: "Short public release notes"
@@ -152,8 +152,8 @@ jobs:
         id: release_assets
         shell: bash
         env:
-          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.251' }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending.' }}
+          MINIMUM_WEB_VERSION: ${{ inputs.minimum_web_version || '2.1.253' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.253. Automated verification passed; physical Samsung Fold acceptance pending.' }}
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
@@ -238,7 +238,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_NAME: ${{ needs.build-signed-apk.outputs.version_name }}
-          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.251. Automated verification passed; physical Samsung Fold acceptance pending.' }}
+          RELEASE_NOTES: ${{ inputs.release_notes || 'Background return evidence and verified Android backup export. Requires Web 2.1.253. Automated verification passed; physical Samsung Fold acceptance pending.' }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_NOTES"

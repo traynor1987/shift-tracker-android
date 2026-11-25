@@ -21,4 +21,13 @@ class AcceptedFixProgressTest {
         progress.reset(); assertNull(progress.lastReceiptElapsedMs)
         progress.accepted("B:1", 1_000); assertEquals(1_000L, progress.lastReceiptElapsedMs)
     }
+    @Test fun providerTimeIsAvailableBeforeReplayAndCannotMoveBackwards() {
+        val progress = AcceptedFixProgress()
+        progress.accepted("A:2", 2000, 20000)
+        assertEquals(20000L, progress.lastProviderTimestampEpochMs)
+        progress.accepted("A:1", 3000, 10000)
+        assertEquals(20000L, progress.lastProviderTimestampEpochMs)
+        progress.reset()
+        assertNull(progress.lastProviderTimestampEpochMs)
+    }
 }
