@@ -3617,6 +3617,11 @@ export default function ShiftTrackerApp() {
 
   processNativeReplayRef.current = async (samples) => {
     const ingestionStartedAt = performance.now();
+    const baseData = lastCommittedDataRef.current;
+    const stagingRefs = [lastRoutePointRef, lastLocationSampleAtRef, realGeofenceStateRef,
+      dominosGeofenceStateRef, lastOperationalSampleRef, carryoutDepartureStateRef,
+      realGeofenceOwnerRef, transferredReturnGuardRef];
+    const beforeStaging = stagingRefs.map(ref => structuredClone(ref.current));
     try {
       await nativeReturnFlushRef.current;
       if (nativeSamplePersistenceBlockedRef.current) return;
@@ -3664,6 +3669,11 @@ export default function ShiftTrackerApp() {
       });
       recordRuntimeMeasurement("native_ingestion", performance.now() - ingestionStartedAt);
     } catch (error) {
+      // If staging failed before React applied a canonical update, reset its
+      // sampling/evaluator cursors so retained fixes can be replayed in full.
+      if (lastCommittedDataRef.current === baseData) stagingRefs.forEach((ref, index) => {
+        ref.current = beforeStaging[index] as typeof ref.current;
+      });
       samples.forEach(sample => nativeUnpersistedSampleIdsRef.current.add(sample.sampleId));
       nativeSamplePersistenceBlockedRef.current = true;
       appendDeveloperLog("INGESTION", "SAMPLE_PERSISTENCE_DEFERRED",
@@ -7864,8 +7874,8 @@ export default function ShiftTrackerApp() {
     const sample = readNativeLocationSample(event);
     if (sample) {
       lastNativeRawCallbackAtRef.current = sample.timestampEpochMs;
-      // Callback receipt is diagnostic; only accepted, session-owned fixes
-      // refresh the useful-fix watchdog after canonical ingestion completes.
+      // Native journal acceptance reports collection health immediately.
+      // Historical replay timestamps cannot refresh a stale provider.
       // Android may replay its entire pending journal on both Activity resume
       // and shell hello. A point already waiting for its durable save needs
       // only one pass through the expensive canonical ingestion path.

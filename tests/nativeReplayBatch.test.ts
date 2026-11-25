@@ -74,7 +74,7 @@ test('actual incoming native fix marks provider live before the recovery-save qu
   assert.equal(latest.current?.timestamp, now);
 });
 
-for (const fails of [false, true]) test(`actual replay processor saves 32 ordered fixes once and acknowledges only durable success (failure=${fails})`, async () => {
+for (const failure of ["none", "save", "stage"]) test(`actual replay processor retains ordered fixes and acknowledges only durable success (failure=${failure})`, async () => {
   const { readFileSync } = await import('node:fs');
   const vm = await import('node:vm');
   const ts = await import('typescript');
@@ -96,12 +96,19 @@ for (const fails of [false, true]) test(`actual replay processor saves 32 ordere
   const persisted = new Promise<void>(resolve => {release = resolve;});
   const unpersisted = {current:new Set<string>()};
   const blocked = {current:false};
+  const routeCursor = {current:null as number | null};
   const context = vm.createContext({
+    structuredClone,
+    lastRoutePointRef:routeCursor, lastLocationSampleAtRef:{current:0}, realGeofenceStateRef:{current:null},
+    dominosGeofenceStateRef:{current:null}, lastOperationalSampleRef:{current:0}, carryoutDepartureStateRef:{current:null},
+    realGeofenceOwnerRef:{current:null}, transferredReturnGuardRef:{current:null},
     nativeReturnFlushRef:{current:Promise.resolve()},nativeSamplePersistenceBlockedRef:blocked,
     lastCommittedDataRef:{get current(){return canonical;}},createNativeReplayBatch:createBatch,
     performance,flushNativeSamples,
     applyNativeLocationReadingRef:{current:async (position: {timestamp:number}, _deliveryId: string, _sampleId: string, batch: ReturnType<typeof createBatch>) => {
       ingested.push(position.timestamp);
+      routeCursor.current = position.timestamp;
+      if (failure === "stage" && position.timestamp === 16) throw new Error("staging interrupted");
       await batch.commit(data => {data.settings.hourlyRatePence += 1;});
       return {accepted:true,status:'persisted'};
     }},
@@ -110,7 +117,7 @@ for (const fails of [false, true]) test(`actual replay processor saves 32 ordere
       const draft = structuredClone(canonical);
       if (update(draft) === false) return {status:'rejected'};
       await persisted;
-      if (fails) return {status:'failed',error:new Error('disk')};
+      if (failure === 'save') return {status:'failed',error:new Error('disk')};
       canonical = draft;
       applied(canonical);
       return {status:'persisted'};
@@ -122,12 +129,13 @@ for (const fails of [false, true]) test(`actual replay processor saves 32 ordere
   const samples = Array.from({length:32},(_,i)=>({sampleId:`sample-${i}`,deliveryId:'run',timestampEpochMs:i+1,latitude:0,longitude:0,accuracy:5}));
   const pending = context.processBatch(samples);
   await new Promise<void>(resolve => setImmediate(resolve));
-  assert.equal(saves,1);
+  assert.equal(saves,failure === "stage" ? 0 : 1);
   assert.equal(ack.length,0);
   release();
   await pending;
-  assert.deepEqual(ingested,Array.from({length:32},(_,i)=>i+1));
-  assert.equal(ack.length,fails ? 0 : 32);
-  assert.equal(unpersisted.current.size,fails ? 32 : 0);
-  assert.equal(blocked.current,fails);
+  assert.deepEqual(ingested,Array.from({length:failure === "stage" ? 16 : 32},(_,i)=>i+1));
+  assert.equal(ack.length,failure === "none" ? 32 : 0);
+  assert.equal(unpersisted.current.size,failure === "none" ? 0 : 32);
+  assert.equal(blocked.current,failure !== "none");
+  assert.equal(routeCursor.current,failure === "none" ? 32 : null);
 });
